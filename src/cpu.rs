@@ -300,7 +300,8 @@ impl Cpu {
             AddressingMode::Absolute(_) => 2,
             AddressingMode::AbsoluteX(_) => 2,
             AddressingMode::AbsoluteY(_) => 2,
-            Implicit => 0,
+            AddressingMode::Indirect(_) => 2,
+            AddressingMode::Implicit => 0,
         };
 
         self.pc += instruction_length;
