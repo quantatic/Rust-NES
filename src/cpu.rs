@@ -1,9 +1,7 @@
-#![allow(dead_code)]
+use crate::memory::Memory;
 
-use crate::rom::Rom;
-
-pub struct Cpu {
-    pc: u16,
+pub struct Cpu<'a> {
+    pub pc: u16,
     sp: u8,
     accumulator: u8,
     x: u8,
@@ -15,25 +13,26 @@ pub struct Cpu {
     brk: bool,
     overflow: bool,
     sign: bool,
-    rom: Rom,
+    memory: &'a mut Memory,
 }
 
-#[derive(Debug)]
-enum AddressingMode {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Opcode {
+    Add, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs, Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy, Dec, Dex, Dey, Eor, Inc, Inx, Iny, Jmp, Jsr, Lda, Ldx, Ldy, Lsr, Nop, Ora, Pha, Php, Pla, Plp, Rol, Ror, Rti, Rts, Sbc, Sec, Sed, Sei, Sta, Stx, Sty, Tax, Tay, Tsx, Txa, Txs, Tya,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AddressingMode {
     ZeroPage(u8), ZeroPageX(u8), ZeroPageY(u8),
     Absolute(u16), AbsoluteX(u16), AbsoluteY(u16),
     Indirect(u16), IndirectX(u8), IndirectY(u8),
     Implicit,
     Immediate(u8),
     Relative(i8),
+    Accumulator,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Opcode {
-    Add, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs, Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy, Dec, Dex, Dey, Eor, Inc, Inx, Iny, Jmp, Jsr, Lda, Ldx, Ldy, Lsr, Nop, Ora, Pha, Php, Pla, Plp, Rol, Ror, Rti, Rts, Sbc, Sec, Sed, Sei, Sta, Stx, Sty, Tax, Tay, Tsx, Txa, Txs, Tya,
-}
-
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Instruction {
     opcode: Opcode,
     mode: AddressingMode,
@@ -41,8 +40,8 @@ pub struct Instruction {
     page_cross_cost: bool,
 }
 
-impl Cpu {
-    pub fn new(rom: Rom) -> Self {
+impl<'a> Cpu<'a> {
+    pub fn new(memory: &'a mut Memory) -> Self {
         Cpu {
             pc: 0x0,
             sp: 0x0,
@@ -56,18 +55,21 @@ impl Cpu {
             brk: false,
             overflow: false,
             sign: false,
-            rom,
+            memory,
         }
     }
 
+    pub fn reset(&mut self) {
+        self.pc = self.memory.get_word_at(0xFFFC);
+    }
+
     pub fn fetch_next_instruction(&mut self) -> Instruction {
-        let opcode: u8 = self.get_byte_at(AddressingMode::Absolute(self.pc));
-        let byte_after_opcode: u8 = self.get_byte_at(AddressingMode::Absolute(self.pc + 1));
+        let opcode: u8 = self.memory.get_byte_at(self.pc);
+        let byte_after_opcode: u8 = self.memory.get_byte_at(self.pc + 1);
         let signed_byte_after_opcode: i8 = byte_after_opcode as i8;
-        let word_after_opcode: u16 = self.get_word_at(AddressingMode::Absolute(self.pc + 1));
+        let word_after_opcode: u16 = self.memory.get_word_at(self.pc + 1);
 
-        println!("Opcode: 0x{:02x}", opcode);
-
+        //println!("Opcode: 0x{:02x}", opcode);
         let result = match opcode {
             /* Add */
             0x69 => Instruction {
@@ -1052,33 +1054,296 @@ impl Cpu {
             AddressingMode::AbsoluteY(_) => 2,
             AddressingMode::Indirect(_) => 2,
             AddressingMode::Implicit => 0,
+            AddressingMode::Accumulator => 0,
         };
 
         self.pc += instruction_length;
         result
     }
 
-    pub fn execute_instruction(&mut self, instruction: Instruction) { }
+    pub fn execute_instruction(&mut self, instruction: Instruction) -> u8 {
+        match instruction.opcode {
+            Opcode::Add => self.adc(instruction.mode),
+            Opcode::And => self.and(instruction.mode),
+            Opcode::Asl => self.asl(instruction.mode),
+            Opcode::Bcc => self.bcc(instruction.mode),
+            Opcode::Bcs => self.bcs(instruction.mode),
+            Opcode::Beq => self.beq(instruction.mode),
+            Opcode::Bit => self.bit(instruction.mode),
+            Opcode::Bmi => self.bmi(instruction.mode),
+            Opcode::Bne => self.bne(instruction.mode),
+            Opcode::Bpl => self.bpl(instruction.mode),
+            Opcode::Brk => self.brk(instruction.mode),
+            Opcode::Bvc => self.bvc(instruction.mode),
+            Opcode::Bvs => self.bvs(instruction.mode),
+            Opcode::Clc => self.clc(),
+            Opcode::Cld => self.cld(),
+            Opcode::Cli => self.cli(),
+            Opcode::Clv => self.clv(),
+            Opcode::Cmp => self.cmp(instruction.mode),
+            Opcode::Cpx => self.cpx(instruction.mode),
+            Opcode::Cpy => self.cpy(instruction.mode),
+            Opcode::Dec => self.dec(instruction.mode),
+            Opcode::Dex => self.dex(),
+            Opcode::Dey => self.dey(),
+            Opcode::Eor => self.eor(instruction.mode),
+            Opcode::Inc => self.inc(instruction.mode),
+            Opcode::Inx => self.inx(),
+            Opcode::Iny => self.iny(),
+            Opcode::Jmp => self.jmp(instruction.mode),
+            Opcode::Jsr => self.jsr(instruction.mode),
+            //_ => panic!("{:?} unimplemented", instruction),
+            _ => { },
+        }
+        0x0
+    }
 
-    fn get_byte_at(&self, mode: AddressingMode) -> u8 {
+    fn read_with_addressing_mode(&self, mode: AddressingMode) -> u8 {
         match mode {
-            AddressingMode::Absolute(addr) => self.rom.prg_rom[usize::from(addr)],
-            _ => 0x0,
+            AddressingMode::ZeroPage(val) => self.memory.get_byte_at(u16::from(val)),
+            AddressingMode::ZeroPageX(val) => self.memory.get_byte_at(u16::from(val.wrapping_add(self.x))),
+            AddressingMode::ZeroPageY(val) => self.memory.get_byte_at(u16::from(val.wrapping_add(self.y))),
+            AddressingMode::Absolute(addr) => self.memory.get_byte_at(addr),
+            AddressingMode::AbsoluteX(val) => self.memory.get_byte_at(val + u16::from(self.x)),
+            AddressingMode::AbsoluteY(val) => self.memory.get_byte_at(val + u16::from(self.y)),
+            AddressingMode::IndirectX(val) => self.memory.get_byte_at(self.memory.get_word_at(u16::from(val) + u16::from(self.x))),
+            AddressingMode::IndirectY(val) => self.memory.get_byte_at(self.memory.get_word_at(u16::from(val)) + u16::from(self.y)),
+            AddressingMode::Immediate(val) => val,
+            _ => panic!("Attempted to resolve address value of {:?} illegally", mode),
         }
     }
 
-    fn get_word_at(&self, mode: AddressingMode) -> u16 {
+    fn write_with_addressing_mode(&mut self, mode: AddressingMode, assigned_val: u8) {
+        match mode {
+            AddressingMode::ZeroPage(val) => self.memory.set_byte_at(u16::from(val), assigned_val),
+            AddressingMode::ZeroPageX(val) => self.memory.set_byte_at(u16::from(val.wrapping_add(self.x)), assigned_val),
+            AddressingMode::ZeroPageY(val) => self.memory.set_byte_at(u16::from(val.wrapping_add(self.y)), assigned_val),
+            AddressingMode::Absolute(addr) => self.memory.set_byte_at(addr, assigned_val),
+            AddressingMode::AbsoluteX(val) => self.memory.set_byte_at(val + u16::from(self.x), assigned_val),
+            AddressingMode::AbsoluteY(val) => self.memory.set_byte_at(val + u16::from(self.y), assigned_val),
+            AddressingMode::IndirectX(val) => self.memory.set_byte_at(self.memory.get_word_at(u16::from(val) + u16::from(self.x)), assigned_val),
+            AddressingMode::IndirectY(val) => self.memory.set_byte_at(self.memory.get_word_at(u16::from(val)) + u16::from(self.y), assigned_val),
+            _ => panic!("Attempted to resolve address value of {:?} illegally", mode),
+        }
+    }
+
+    fn adc(&mut self, mode: AddressingMode) {
+        let to_be_added = self.read_with_addressing_mode(mode);
+
+        let (first_add, first_carry) = self.accumulator.overflowing_add(to_be_added);
+        let (result, second_carry) = first_add.overflowing_add(u8::from(self.carry));
+
+        self.accumulator = result;
+        self.sign = (result as i8) < 0;
+        self.zero = (result == 0);
+        self.carry = first_carry | second_carry;
+        self.overflow = ((to_be_added ^ result) & (self.accumulator ^ result) & 0x80) != 0;
+    }
+
+    fn and(&mut self, mode: AddressingMode) {
+        let to_be_anded = self.read_with_addressing_mode(mode);
+        let result = to_be_anded & self.accumulator;
+
+        self.accumulator = result;
+        self.sign = (result as i8) < 0;
+        self.zero = (result == 0);
+    }
+
+    fn asl(&mut self, mode: AddressingMode) {
+        let to_be_asled = self.read_with_addressing_mode(mode);
+        let result = to_be_asled << 1;
+
+        self.write_with_addressing_mode(mode, result);
+        self.sign = (result as i8) < 0;
+        self.zero = (result == 0);
+        self.carry = (to_be_asled & (1 << 7)) != 0;
+    }
+
+    fn branch(&mut self, condition: bool, offset: i8) {
+        if condition {
+            self.pc = (self.pc as i32 + offset as i32) as u16;
+        }
+    }
+
+    fn bcc(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(!self.carry, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn bcs(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(self.carry, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn beq(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(self.zero, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn bit(&mut self, mode: AddressingMode) {
+        panic!("TODO");
+    }
+
+    fn bmi(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(self.sign, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn bne(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(!self.zero, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn bpl(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(!self.sign, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn brk(&mut self, mode: AddressingMode) {
+        //panic!("TODO");
+    }
+
+    fn bvc(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(!self.overflow, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn bvs(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Relative(offset) => self.branch(self.overflow, offset),
+            _ => panic!("Cannot branch using {:?}", mode),
+        }
+    }
+
+    fn clc(&mut self) {
+        self.carry = false;
+    }
+
+    fn cld(&mut self) {
+        self.decimal = false;
+    }
+
+    fn cli(&mut self) {
+        self.brk = false;
+    }
+
+    fn clv(&mut self) {
+        self.overflow = false;
+    }
+
+    /* Maybe not quite right? */
+    fn cmp(&mut self, mode: AddressingMode) {
+        let to_compare = self.read_with_addressing_mode(mode);
+
+        self.sign = self.accumulator < to_compare;
+        self.zero = self.accumulator == to_compare;
+        self.carry = self.accumulator >= to_compare;
+    }
+
+    fn cpx(&mut self, mode: AddressingMode) {
+        let to_compare = self.read_with_addressing_mode(mode);
+
+        self.sign = self.x < to_compare;
+        self.zero = self.x == to_compare;
+        self.carry = self.x >= to_compare;
+    }
+
+    fn cpy(&mut self, mode: AddressingMode) {
+        let to_compare = self.read_with_addressing_mode(mode);
+
+        self.sign = self.y < to_compare;
+        self.zero = self.y == to_compare;
+        self.carry = self.y >= to_compare;
+    }
+
+    fn dec(&mut self, mode: AddressingMode) {
+        let old_val = self.read_with_addressing_mode(mode);
+        let result = self.accumulator.wrapping_sub(1);
+        self.write_with_addressing_mode(mode, result);
+
+        self.sign = (result as i8) < 0;
+        self.zero = (result == 0);
+    }
+
+    fn dex(&mut self) {
+        self.x = self.x.wrapping_sub(1);
+
+        self.sign = (self.x as i8) < 0;
+        self.zero = (self.x == 0);
+    }
+
+    fn dey(&mut self) {
+        self.y = self.y.wrapping_sub(1);
+
+        self.sign = (self.y as i8) < 0;
+        self.zero = (self.y == 0);
+    }
+
+    fn eor(&mut self, mode: AddressingMode) {
+        let other_val = self.read_with_addressing_mode(mode);
+        self.accumulator ^= other_val;
+
+        self.sign = (self.accumulator as i8) < 0;
+        self.zero = (self.accumulator == 0);
+    }
+
+    fn inc(&mut self, mode: AddressingMode) {
+        let old_val = self.read_with_addressing_mode(mode);
+        let result = self.accumulator.wrapping_add(1);
+        self.write_with_addressing_mode(mode, result);
+
+        self.sign = (result as i8) < 0;
+        self.zero = (result == 0);
+    }
+
+    fn inx(&mut self) {
+        self.x = self.x.wrapping_add(1);
+
+        self.sign = (self.x as i8) < 0;
+        self.zero = (self.x == 0);
+    }
+
+    fn iny(&mut self) {
+        self.y = self.y.wrapping_add(1);
+
+        self.sign = (self.y as i8) < 0;
+        self.zero = (self.y == 0);
+    }
+
+    fn jmp(&mut self, mode: AddressingMode) {
         match mode {
             AddressingMode::Absolute(addr) => {
-                let low = self.rom.prg_rom[usize::from(addr)];
-                let high = self.rom.prg_rom[usize::from(addr + 1)];
-                ((high as u16) << 8) | (low as u16)
+                self.pc = addr;
             },
-            _ => 0x0,
+            AddressingMode::Indirect(addr) => {
+                self.pc = self.memory.get_word_at(addr);
+            },
+            _ => panic!("Cannot jmp using {:?}", mode),
         }
     }
 
-    fn set_byte_at(&mut self, mode: AddressingMode, val: u8) { }
-
-    fn set_word_at(&mut self, mode: AddressingMode, val: u16) { }
+    fn jsr(&mut self, mode: AddressingMode) {
+        match mode {
+            AddressingMode::Absolute(addr) => {
+                self.sp = self.sp.wrapping_sub(2);
+                self.memory.set_word_at(0x100 + u16::from(self.sp), self.pc + 2);
+                self.pc = addr;
+            },
+            _ => panic!("Cannot jsr using {:?}", mode),
+        }
+    }
 }

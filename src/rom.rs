@@ -2,9 +2,21 @@ use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{Error, ErrorKind, Read};
 
+#[derive(Debug)]
 pub struct Rom {
     pub prg_rom: Vec<u8>,
     pub chr_rom: Vec<u8>,
+    pub mapper_number: u8,
+    pub mirroring: MirroringType,
+    pub battery_backed_ram: bool,
+    pub trainer: bool,
+}
+
+#[derive(Debug)]
+pub enum MirroringType {
+    Horizontal,
+    Vertical,
+    FourScreen,
 }
 
 impl Rom {
@@ -16,6 +28,7 @@ impl Rom {
 
         f.read_exact(&mut header)?;
 
+        println!("{:x?}", header);
         if header[0..4] != *b"NES\x1a" {
             return Err(Error::new(ErrorKind::InvalidData, "Rom had invalid header"));
         }
@@ -31,17 +44,39 @@ impl Rom {
             return Err(Error::new(ErrorKind::InvalidData, "Bytes 9-15 of header are not all 0"));
         }
 
-        let prg_bytes = u32::try_from(prg_rom_banks).unwrap() * 16 * 1024;
-        let chr_bytes = u32::try_from(chr_rom_banks).unwrap() * 8 * 1024;
+        if (rom_ctrl_byte_2 & (0b00001111)) != 0 {
+            return Err(Error::new(ErrorKind::InvalidData, "Bits 0-3 of Rom Control Byte 2 are not all 0"));
+        }
+
+        let prg_bytes = u32::try_from(prg_rom_banks).unwrap() * 0x4000;
+        let chr_bytes = u32::try_from(chr_rom_banks).unwrap() * 0x2000;
+        println!("Prg bytes: {}", prg_rom_banks);
 
         let mut prg_rom = vec![0u8; usize::try_from(prg_bytes).unwrap()];
-
         f.read_exact(&mut prg_rom)?;
+
+        let mut chr_rom = vec![0u8; usize::try_from(chr_bytes).unwrap()];
+        f.read_exact(&mut chr_rom)?;
+
+        // Ensure that we've read all the necessary data from the file correctly, to the end of the
+        // ROM file.
+        let file_metadata = f.metadata()?;
+        assert!(file_metadata.len() == u64::from(prg_bytes + chr_bytes + 0x10));
 
         Ok(
             Rom {
                 prg_rom,
-                chr_rom: Vec::new(),
+                chr_rom,
+                mapper_number: (rom_ctrl_byte_2 & 0b11110000) | ((rom_ctrl_byte_1 & 0b11110000) >> 4),
+                mirroring: if (rom_ctrl_byte_1 & (1 << 3)) != 0 {
+                    MirroringType::FourScreen
+                } else if (rom_ctrl_byte_1 & (1 << 0)) == 0 {
+                    MirroringType::Horizontal
+                } else {
+                    MirroringType::Vertical
+                },
+                battery_backed_ram: (rom_ctrl_byte_1 & (1 << 1)) != 0,
+                trainer: (rom_ctrl_byte_1 & (1 << 2)) != 0,
             }
         )
     }
