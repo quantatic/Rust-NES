@@ -1092,6 +1092,16 @@ impl<'a> Cpu<'a> {
             Opcode::Iny => self.iny(),
             Opcode::Jmp => self.jmp(instruction.mode),
             Opcode::Jsr => self.jsr(instruction.mode),
+            Opcode::Lda => self.lda(instruction.mode),
+            Opcode::Ldx => self.ldx(instruction.mode),
+            Opcode::Ldy => self.ldy(instruction.mode),
+            Opcode::Lsr => self.lsr(instruction.mode),
+            Opcode::Nop => self.nop(),
+            Opcode::Ora => self.ora(instruction.mode),
+            Opcode::Pha => self.pha(),
+            Opcode::Php => self.php(),
+            Opcode::Pla => self.pla(),
+            Opcode::Plp => self.php(),
             //_ => panic!("{:?} unimplemented", instruction),
             _ => { },
         }
@@ -1294,8 +1304,7 @@ impl<'a> Cpu<'a> {
     }
 
     fn eor(&mut self, mode: AddressingMode) {
-        let other_val = self.read_with_addressing_mode(mode);
-        self.accumulator ^= other_val;
+        self.accumulator ^= self.read_with_addressing_mode(mode);
 
         self.sign = (self.accumulator as i8) < 0;
         self.zero = (self.accumulator == 0);
@@ -1345,5 +1354,126 @@ impl<'a> Cpu<'a> {
             },
             _ => panic!("Cannot jsr using {:?}", mode),
         }
+    }
+
+    fn lda(&mut self, mode: AddressingMode) {
+        self.accumulator = self.read_with_addressing_mode(mode);
+
+        self.sign = (self.accumulator as i8) < 0;
+        self.zero = (self.accumulator == 0);
+    }
+
+    fn ldx(&mut self, mode: AddressingMode) {
+        self.x = self.read_with_addressing_mode(mode);
+
+        self.sign = (self.x as i8) < 0;
+        self.zero = (self.x == 0);
+    }
+
+    fn ldy(&mut self, mode: AddressingMode) {
+        self.y = self.read_with_addressing_mode(mode);
+
+        self.sign = (self.y as i8) < 0;
+        self.zero = (self.y == 0);
+    }
+
+    fn lsr(&mut self, mode: AddressingMode) {
+        let to_be_lsred = self.read_with_addressing_mode(mode);
+        let result = to_be_lsred >> 1;
+
+        self.write_with_addressing_mode(mode, result);
+        self.sign = false;
+        self.zero = (result == 0);
+        self.carry = (to_be_lsred & (1 << 0)) != 0;
+    }
+
+    fn nop(&mut self) {
+        /* do nothing */
+    }
+
+    fn ora(&mut self, mode: AddressingMode) {
+        self.accumulator |= self.read_with_addressing_mode(mode);
+
+        self.sign = (self.accumulator as i8) < 0;
+        self.zero = (self.accumulator == 0);
+    }
+
+    fn pha(&mut self) {
+        self.sp = self.sp.wrapping_sub(1);
+        self.memory.set_byte_at(0x100 + u16::from(self.sp), self.accumulator);
+    }
+
+    fn php(&mut self) {
+        let processor_status: u8 = ((self.sign as u8) << 7)
+            | ((self.overflow as u8) << 6)
+            | ((0 as u8) << 5)
+            | ((self.brk as u8) << 4)
+            | ((self.decimal as u8) << 3)
+            | ((self.interrupt as u8) << 2)
+            | ((self.zero as u8) << 1)
+            | ((self.carry as u8) << 0);
+        self.sp = self.sp.wrapping_sub(1);
+        self.memory.set_byte_at(0x100 + u16::from(self.sp), processor_status);
+    }
+
+    fn pla(&mut self) {
+        self.accumulator = self.memory.get_byte_at(0x100 + u16::from(self.sp));
+        self.sp = self.sp.wrapping_add(1);
+    }
+
+    fn plp(&mut self) {
+        let processor_flags = self.memory.get_byte_at(0x100 + u16::from(self.sp));
+        self.sp = self.sp.wrapping_add(1);
+
+        self.sign = (processor_flags & (1 << 7)) != 0;
+        self.overflow = (processor_flags & (1 << 6)) != 0;
+        let _ = (processor_flags & (1 << 5)) != 0;
+        self.brk = (processor_flags & (1 << 4)) != 0;
+        self.decimal = (processor_flags & (1 << 3)) != 0;
+        self.interrupt = (processor_flags & (1 << 2)) != 0;
+        self.zero = (processor_flags & (1 << 1)) != 0;
+        self.carry = (processor_flags & (1 << 0)) != 0;
+    }
+
+    fn rol(&mut self, mode: AddressingMode) {
+        let to_be_roled = self.read_with_addressing_mode(mode);
+        let new_val = (to_be_roled << 1) | ((self.carry as u8) << 0);
+
+        self.write_with_addressing_mode(mode, new_val);
+        self.sign = (new_val as i8) < 0;
+        self.zero = (new_val == 0);
+        self.carry = (to_be_roled & (1 << 7)) != 0;
+    }
+
+    fn ror(&mut self, mode: AddressingMode) {
+        let to_be_rored = self.read_with_addressing_mode(mode);
+        let new_val = (to_be_rored >> 1) | ((self.carry as u8) << 7);
+
+        self.write_with_addressing_mode(mode, new_val);
+        self.sign = (new_val as i8) < 0;
+        self.zero = (new_val == 0);
+        self.carry = (to_be_rored & (1 << 0)) != 0;
+    }
+
+    fn rti(&mut self) {
+        let processor_flags = self.memory.get_byte_at(0x100 + u16::from(self.sp));
+        self.sp = self.sp.wrapping_add(1);
+
+        self.sign = (processor_flags & (1 << 7)) != 0;
+        self.overflow = (processor_flags & (1 << 6)) != 0;
+        let _ = (processor_flags & (1 << 5)) != 0;
+        self.brk = (processor_flags & (1 << 4)) != 0;
+        self.decimal = (processor_flags & (1 << 3)) != 0;
+        self.interrupt = (processor_flags & (1 << 2)) != 0;
+        self.zero = (processor_flags & (1 << 1)) != 0;
+        self.carry = (processor_flags & (1 << 0)) != 0;
+
+        self.pc = self.memory.get_word_at(0x100 + u16::from(self.sp));
+        self.sp = self.sp.wrapping_add(2);
+    }
+
+    fn rts(&mut self) {
+        self.pc = self.memory.get_word_at(0x100 + u16::from(self.sp));
+        self.sp = self.sp.wrapping_add(2);
     }
 }

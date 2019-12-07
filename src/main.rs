@@ -13,9 +13,9 @@ fn main() {
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset();
 
-    for _ in 0..10_000_000 {
+    for _ in 0..100 {
         let next_instruction = cpu.fetch_next_instruction();
-        //println!("0x{:05x}: {:x?}", cpu.pc, next_instruction);
+        println!("0x{:05x}: {:x?}", cpu.pc, next_instruction);
         cpu.execute_instruction(next_instruction);
     }
 }
