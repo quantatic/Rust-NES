@@ -28,7 +28,6 @@ impl Rom {
 
         f.read_exact(&mut header)?;
 
-        println!("{:x?}", header);
         if header[0..4] != *b"NES\x1a" {
             return Err(Error::new(ErrorKind::InvalidData, "Rom had invalid header"));
         }
@@ -37,10 +36,9 @@ impl Rom {
         let chr_rom_banks = header[5];
         let rom_ctrl_byte_1 = header[6];
         let rom_ctrl_byte_2 = header[7];
-        let prg_ram_banks = std::cmp::min(header[8], 1); //assume 1 page exists even when 0
+        let prg_ram_banks = std::cmp::max(header[8], 1); //assume 1 bank exists even when 0
 
         if header[9..16] != [0; 7] {
-            println!("{:?}", &header[9..16]);
             return Err(Error::new(ErrorKind::InvalidData, "Bytes 9-15 of header are not all 0"));
         }
 
@@ -50,7 +48,6 @@ impl Rom {
 
         let prg_bytes = u32::try_from(prg_rom_banks).unwrap() * 0x4000;
         let chr_bytes = u32::try_from(chr_rom_banks).unwrap() * 0x2000;
-        println!("Prg bytes: {}", prg_rom_banks);
 
         let mut prg_rom = vec![0u8; usize::try_from(prg_bytes).unwrap()];
         f.read_exact(&mut prg_rom)?;
