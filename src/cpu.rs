@@ -64,9 +64,33 @@ impl<'a> Cpu<'a> {
         }
     }
 
+    fn push_byte(&mut self, val: u8) {
+        self.memory.set_byte_at(0x100 + u16::from(self.sp), val);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    fn push_word(&mut self, val: u16) {
+        let low_byte = (val & 0xFF) as u8;
+        let high_byte = ((val >> 8) & 0xFF) as u8;
+
+        self.push_byte(high_byte);
+        self.push_byte(low_byte);
+    }
+
+    fn pop_byte(&mut self) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        return self.memory.get_byte_at(0x100 + u16::from(self.sp));
+    }
+
+    fn pop_word(&mut self) -> u16 {
+        let low_byte = self.pop_byte();
+        let high_byte = self.pop_byte();
+
+        return ((high_byte as u16) << 8) | (low_byte as u16);
+    }
+
     pub fn interrupt(&mut self, int_type: Interrupt) {
-        self.sp = self.sp.wrapping_sub(2);
-        self.memory.set_word_at(0x100 + u16::from(self.sp), self.pc);
+        self.push_word(self.pc);
 
         // Push processor flags to stack
         self.php();
@@ -1615,11 +1639,15 @@ impl<'a> Cpu<'a> {
             AddressingMode::AbsoluteX(val) => self.memory.get_byte_at(val + u16::from(self.x)),
             AddressingMode::AbsoluteY(val) => self.memory.get_byte_at(val.wrapping_add(u16::from(self.y))),
             AddressingMode::IndirectX(val) => {
-                let indirect_addr = self.memory.get_word_at(u16::from(val) + u16::from(self.x));
+                let low_byte = self.memory.get_byte_at((val.wrapping_add(self.x)) as u16);
+                let high_byte = self.memory.get_byte_at((val.wrapping_add(self.x).wrapping_add(1)) as u16);
+                let indirect_addr = ((high_byte as u16) << 8) | (low_byte as u16);
                 self.memory.get_byte_at(indirect_addr)
             },
             AddressingMode::IndirectY(val) => {
-                let indirect_addr = self.memory.get_word_at(u16::from(val) + u16::from(self.y));
+                let low_byte = self.memory.get_byte_at(val as u16);
+                let high_byte = self.memory.get_byte_at((val.wrapping_add(1)) as u16);
+                let indirect_addr = ((((high_byte as u16) << 8) | (low_byte as u16))).wrapping_add(self.y as u16);
                 self.memory.get_byte_at(indirect_addr)
             },
             AddressingMode::Immediate(val) => val,
@@ -1637,11 +1665,15 @@ impl<'a> Cpu<'a> {
             AddressingMode::AbsoluteX(val) => self.memory.set_byte_at(val + u16::from(self.x), assigned_val),
             AddressingMode::AbsoluteY(val) => self.memory.set_byte_at(val + u16::from(self.y), assigned_val),
             AddressingMode::IndirectX(val) => {
-                let indirect_addr = self.memory.get_word_at(u16::from(val) + u16::from(self.x));
+                let low_byte = self.memory.get_byte_at((val.wrapping_add(self.x)) as u16);
+                let high_byte = self.memory.get_byte_at((val.wrapping_add(self.x).wrapping_add(1)) as u16);
+                let indirect_addr = ((high_byte as u16) << 8) | (low_byte as u16);
                 self.memory.set_byte_at(indirect_addr, assigned_val);
             },
             AddressingMode::IndirectY(val) => {
-                let indirect_addr = self.memory.get_word_at(u16::from(val)) + u16::from(self.y);
+                let low_byte = self.memory.get_byte_at(val as u16);
+                let high_byte = self.memory.get_byte_at((val.wrapping_add(1)) as u16);
+                let indirect_addr = ((((high_byte as u16) << 8) | (low_byte as u16))).wrapping_add(self.y as u16);
                 self.memory.set_byte_at(indirect_addr, assigned_val);
             },
             AddressingMode::Accumulator => self.accumulator = assigned_val,
@@ -1804,7 +1836,7 @@ impl<'a> Cpu<'a> {
 
     fn dec(&mut self, mode: AddressingMode) {
         let old_val = self.read_with_addressing_mode(mode);
-        let result = self.accumulator.wrapping_sub(1);
+        let result = old_val.wrapping_sub(1);
         self.write_with_addressing_mode(mode, result);
 
         self.sign = (result as i8) < 0;
@@ -1834,7 +1866,7 @@ impl<'a> Cpu<'a> {
 
     fn inc(&mut self, mode: AddressingMode) {
         let old_val = self.read_with_addressing_mode(mode);
-        let result = self.accumulator.wrapping_add(1);
+        let result = old_val.wrapping_add(1);
         self.write_with_addressing_mode(mode, result);
 
         self.sign = (result as i8) < 0;
@@ -1883,8 +1915,7 @@ impl<'a> Cpu<'a> {
     fn jsr(&mut self, mode: AddressingMode) {
         match mode {
             AddressingMode::Absolute(addr) => {
-                self.sp = self.sp.wrapping_sub(2);
-                self.memory.set_word_at(0x100 + u16::from(self.sp), self.pc - 1);
+                self.push_word(self.pc - 1);
                 self.pc = addr;
             },
             _ => panic!("Cannot jsr using {:?}", mode),
@@ -1905,8 +1936,6 @@ impl<'a> Cpu<'a> {
 
     fn lda(&mut self, mode: AddressingMode) {
         self.accumulator = self.read_with_addressing_mode(mode);
-
-        println!("Loaded {} into A", self.accumulator);
 
         self.sign = (self.accumulator as i8) < 0;
         self.zero = self.accumulator == 0;
@@ -1942,15 +1971,13 @@ impl<'a> Cpu<'a> {
 
     fn ora(&mut self, mode: AddressingMode) {
         self.accumulator |= self.read_with_addressing_mode(mode);
-        println!("Accumulator result: {:02X}", self.accumulator);
 
         self.sign = (self.accumulator as i8) < 0;
         self.zero = self.accumulator == 0;
     }
 
     fn pha(&mut self) {
-        self.sp = self.sp.wrapping_sub(1);
-        self.memory.set_byte_at(0x100 + u16::from(self.sp), self.accumulator);
+        self.push_byte(self.accumulator);
     }
 
     fn php(&mut self) {
@@ -1962,21 +1989,18 @@ impl<'a> Cpu<'a> {
             | ((self.interrupt as u8) << 2)
             | ((self.zero as u8) << 1)
             | ((self.carry as u8) << 0);
-        self.sp = self.sp.wrapping_sub(1);
-        self.memory.set_byte_at(0x100 + u16::from(self.sp), processor_status);
+        self.push_byte(processor_status);
     }
 
     fn pla(&mut self) {
-        self.accumulator = self.memory.get_byte_at(0x100 + u16::from(self.sp));
-        self.sp = self.sp.wrapping_add(1);
+        self.accumulator = self.pop_byte();
 
         self.zero = self.accumulator == 0;
         self.sign = (self.accumulator as i8) < 0;
     }
 
     fn plp(&mut self) {
-        let processor_flags = self.memory.get_byte_at(0x100 + u16::from(self.sp));
-        self.sp = self.sp.wrapping_add(1);
+        let processor_flags = self.pop_byte();
 
         self.sign = (processor_flags & (1 << 7)) != 0;
         self.overflow = (processor_flags & (1 << 6)) != 0;
@@ -2024,19 +2048,15 @@ impl<'a> Cpu<'a> {
         // Pull processor flags from stack
         self.plp();
 
-        self.pc = self.memory.get_word_at(0x100 + u16::from(self.sp));
-        self.sp = self.sp.wrapping_add(2);
+        self.pc = self.pop_word();
     }
 
     fn rts(&mut self) {
-        self.pc = self.memory.get_word_at(0x100 + u16::from(self.sp));
-        self.pc += 1;
-        self.sp = self.sp.wrapping_add(2);
+        self.pc = self.pop_word() + 1;
     }
 
     fn sax(&mut self, mode: AddressingMode) {
-        let to_be_anded = self.read_with_addressing_mode(mode);
-        let result = to_be_anded & self.accumulator;
+        let result = self.accumulator & self.x;
 
         self.write_with_addressing_mode(mode, result);
     }
