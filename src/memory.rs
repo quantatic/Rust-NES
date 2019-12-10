@@ -28,7 +28,7 @@ impl Memory {
                 // 0x2000-0x2007 mirrored from 0x2000-0x4000
                 let actual_addr = ((addr - 0x2000) % 0x8) + 0x2000;
                 match actual_addr {
-                    0x2000 | 0x2001 | 0x2003..=0x2007 => panic!("Not allowed to read from 0x{:04x}", addr),
+                    0x2000 | 0x2001 | 0x2003..=0x2006 => panic!("Not allowed to read from 0x{:04x}", addr),
                     0x2002 => self.ppu.status,
                     0x2007 => panic!("Reading a byte from VRAM at current address"),
                     _ => panic!(),

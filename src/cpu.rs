@@ -10,7 +10,6 @@ pub struct Cpu<'a> {
     pub zero: bool,
     pub interrupt: bool,
     pub decimal: bool,
-    pub brk: bool,
     pub overflow: bool,
     pub sign: bool,
     pub memory: &'a mut Memory,
@@ -18,7 +17,7 @@ pub struct Cpu<'a> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Opcode {
-    Add, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs, Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy, Dec, Dex, Dey, Eor, Inc, Inx, Iny, Jmp, Jsr, Lda, Ldx, Ldy, Lsr, Nop, Ora, Pha, Php, Pla, Plp, Rol, Ror, Rti, Rts, Sbc, Sec, Sed, Sei, Sta, Stx, Sty, Tax, Tay, Tsx, Txa, Txs, Tya,
+    Add, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs, Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy, Dcp, Dec, Dex, Dey, Eor, Inc, Inx, Iny, Isc, Jmp, Jsr, Lax, Lda, Ldx, Ldy, Lsr, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, Ror, Rra, Rti, Rts, Sax, Sbc, Sec, Sed, Sei, Slo, Sre, Sta, Stx, Sty, Tax, Tay, Tsx, Txa, Txs, Tya,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -59,7 +58,6 @@ impl<'a> Cpu<'a> {
             zero: false,
             interrupt: false,
             decimal: false,
-            brk: false,
             overflow: false,
             sign: false,
             memory,
@@ -73,7 +71,7 @@ impl<'a> Cpu<'a> {
         // Push processor flags to stack
         self.php();
 
-        self.interrupt = false;
+        self.interrupt = true;
         self.pc = match int_type {
             Interrupt::Irq => self.memory.get_word_at(0xFFFE),
             Interrupt::Nmi => self.memory.get_word_at(0xFFFA),
@@ -409,6 +407,49 @@ impl<'a> Cpu<'a> {
                 cycles: 4,
                 page_cross_cost: false,
             },
+            /* Dcp */
+            0xC3 => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0xC7 => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0xCF => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0xD3 => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0xD7 => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::ZeroPageX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0xDB => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0xDF => Instruction {
+                opcode: Opcode::Dcp,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
             /* Dec */
             0xC6 => Instruction {
                 opcode: Opcode::Dec,
@@ -536,6 +577,49 @@ impl<'a> Cpu<'a> {
                 cycles: 2,
                 page_cross_cost: false,
             },
+            /* Isc */
+            0xE3 => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0xE7 => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0xEF => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0xF3 => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0xF7 => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::ZeroPageX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0xFB => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0xFF => Instruction {
+                opcode: Opcode::Isc,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
             /* Jmp */
             0x4C => Instruction {
                 opcode: Opcode::Jmp,
@@ -553,6 +637,43 @@ impl<'a> Cpu<'a> {
             0x20 => Instruction {
                 opcode: Opcode::Jsr,
                 mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            /* Lax */
+            0xA3 => Instruction {
+                opcode: Opcode::Lax,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0xA7 => Instruction {
+                opcode: Opcode::Lax,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 3,
+                page_cross_cost: false,
+            },
+            0xAF => Instruction {
+                opcode: Opcode::Lax,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0xB3 => Instruction {
+                opcode: Opcode::Lax,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0xB7 => Instruction {
+                opcode: Opcode::Lax,
+                mode: AddressingMode::ZeroPageY(byte_after_opcode),
+                cycles: 4,
+                page_cross_cost: false,
+            },
+            0xBF => Instruction {
+                opcode: Opcode::Lax,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
                 cycles: 6,
                 page_cross_cost: false,
             },
@@ -920,6 +1041,49 @@ impl<'a> Cpu<'a> {
                 cycles: 4,
                 page_cross_cost: false,
             },
+            /* Rla */
+            0x23 => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x27 => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0x2F => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x33 => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x37 => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::ZeroPageX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x3B => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0x3F => Instruction {
+                opcode: Opcode::Rla,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
             /* Rol */
             0x2A => Instruction {
                 opcode: Opcode::Rol,
@@ -982,6 +1146,49 @@ impl<'a> Cpu<'a> {
                 cycles: 7,
                 page_cross_cost: false,
             },
+            /* Rra */
+            0x63 => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x67 => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0x6F => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x73 => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x77 => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::ZeroPageX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x7B => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0x7F => Instruction {
+                opcode: Opcode::Rra,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
             /* Rti */
             0x40 => Instruction {
                 opcode: Opcode::Rti,
@@ -996,8 +1203,39 @@ impl<'a> Cpu<'a> {
                 cycles: 6,
                 page_cross_cost: false,
             },
+            /* Sax */
+            0x83 => Instruction {
+                opcode: Opcode::Sax,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x87 => Instruction {
+                opcode: Opcode::Sax,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 3,
+                page_cross_cost: false,
+            },
+            0x8F => Instruction {
+                opcode: Opcode::Sax,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 4,
+                page_cross_cost: false,
+            },
+            0x97 => Instruction {
+                opcode: Opcode::Sax,
+                mode: AddressingMode::ZeroPageY(byte_after_opcode),
+                cycles: 4,
+                page_cross_cost: false,
+            },
             /* Sbc */
             0xE9 => Instruction {
+                opcode: Opcode::Sbc,
+                mode: AddressingMode::Immediate(byte_after_opcode),
+                cycles: 2,
+                page_cross_cost: false,
+            },
+            0xEB => Instruction {
                 opcode: Opcode::Sbc,
                 mode: AddressingMode::Immediate(byte_after_opcode),
                 cycles: 2,
@@ -1064,6 +1302,92 @@ impl<'a> Cpu<'a> {
                 opcode: Opcode::Sei,
                 mode: AddressingMode::Implicit,
                 cycles: 2,
+                page_cross_cost: false,
+            },
+            /* Slo */
+            0x03 => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x07 => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0x0F => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x13 => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x17 => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::ZeroPageX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x1B => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0x1F => Instruction {
+                opcode: Opcode::Slo,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            /* Sre */
+            0x43 => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::IndirectX(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x47 => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::ZeroPage(byte_after_opcode),
+                cycles: 5,
+                page_cross_cost: false,
+            },
+            0x4F => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::Absolute(word_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+           0x53 => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::IndirectY(byte_after_opcode),
+                cycles: 8,
+                page_cross_cost: false,
+            },
+            0x57 => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::ZeroPageX(byte_after_opcode),
+                cycles: 6,
+                page_cross_cost: false,
+            },
+            0x5B => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::AbsoluteY(word_after_opcode),
+                cycles: 7,
+                page_cross_cost: false,
+            },
+            0x5F => Instruction {
+                opcode: Opcode::Sre,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 7,
                 page_cross_cost: false,
             },
             /* Sta */
@@ -1234,6 +1558,7 @@ impl<'a> Cpu<'a> {
             Opcode::Cmp => self.cmp(instruction.mode),
             Opcode::Cpx => self.cpx(instruction.mode),
             Opcode::Cpy => self.cpy(instruction.mode),
+            Opcode::Dcp => self.dcp(instruction.mode),
             Opcode::Dec => self.dec(instruction.mode),
             Opcode::Dex => self.dex(),
             Opcode::Dey => self.dey(),
@@ -1241,8 +1566,10 @@ impl<'a> Cpu<'a> {
             Opcode::Inc => self.inc(instruction.mode),
             Opcode::Inx => self.inx(),
             Opcode::Iny => self.iny(),
+            Opcode::Isc => self.isc(instruction.mode),
             Opcode::Jmp => self.jmp(instruction.mode),
             Opcode::Jsr => self.jsr(instruction.mode),
+            Opcode::Lax => self.lax(instruction.mode),
             Opcode::Lda => self.lda(instruction.mode),
             Opcode::Ldx => self.ldx(instruction.mode),
             Opcode::Ldy => self.ldy(instruction.mode),
@@ -1253,14 +1580,19 @@ impl<'a> Cpu<'a> {
             Opcode::Php => self.php(),
             Opcode::Pla => self.pla(),
             Opcode::Plp => self.plp(),
+            Opcode::Rla => self.rla(instruction.mode),
             Opcode::Rol => self.rol(instruction.mode),
             Opcode::Ror => self.ror(instruction.mode),
+            Opcode::Rra => self.rra(instruction.mode),
             Opcode::Rti => self.rti(),
             Opcode::Rts => self.rts(),
+            Opcode::Sax => self.sax(instruction.mode),
             Opcode::Sbc => self.sbc(instruction.mode),
             Opcode::Sec => self.sec(),
             Opcode::Sed => self.sed(),
             Opcode::Sei => self.sei(),
+            Opcode::Slo => self.slo(instruction.mode),
+            Opcode::Sre => self.sre(instruction.mode),
             Opcode::Sta => self.sta(instruction.mode),
             Opcode::Stx => self.stx(instruction.mode),
             Opcode::Sty => self.sty(instruction.mode),
@@ -1319,15 +1651,16 @@ impl<'a> Cpu<'a> {
 
     fn adc(&mut self, mode: AddressingMode) {
         let to_be_added = self.read_with_addressing_mode(mode);
+        let old_accumulator = self.accumulator;
 
-        let (first_add, first_carry) = self.accumulator.overflowing_add(to_be_added);
+        let (first_add, first_carry) = old_accumulator.overflowing_add(to_be_added);
         let (result, second_carry) = first_add.overflowing_add(u8::from(self.carry));
 
         self.accumulator = result;
         self.sign = (result as i8) < 0;
         self.zero = result == 0;
+        self.overflow = ((to_be_added ^ result) & (old_accumulator ^ result) & 0x80) != 0;
         self.carry = first_carry | second_carry;
-        self.overflow = ((to_be_added ^ result) & (self.accumulator ^ result) & 0x80) != 0;
     }
 
     fn and(&mut self, mode: AddressingMode) {
@@ -1432,18 +1765,17 @@ impl<'a> Cpu<'a> {
     }
 
     fn cli(&mut self) {
-        self.brk = false;
+        self.interrupt = false;
     }
 
     fn clv(&mut self) {
         self.overflow = false;
     }
 
-    /* Maybe not quite right? */
     fn cmp(&mut self, mode: AddressingMode) {
         let to_compare = self.read_with_addressing_mode(mode);
 
-        self.sign = self.accumulator < to_compare;
+        self.sign = (self.accumulator.wrapping_sub(to_compare) as i8) < 0;
         self.zero = self.accumulator == to_compare;
         self.carry = self.accumulator >= to_compare;
     }
@@ -1451,7 +1783,7 @@ impl<'a> Cpu<'a> {
     fn cpx(&mut self, mode: AddressingMode) {
         let to_compare = self.read_with_addressing_mode(mode);
 
-        self.sign = self.x < to_compare;
+        self.sign = (self.x.wrapping_sub(to_compare) as i8) < 0;
         self.zero = self.x == to_compare;
         self.carry = self.x >= to_compare;
     }
@@ -1459,9 +1791,15 @@ impl<'a> Cpu<'a> {
     fn cpy(&mut self, mode: AddressingMode) {
         let to_compare = self.read_with_addressing_mode(mode);
 
-        self.sign = self.y < to_compare;
+        self.sign = (self.y.wrapping_sub(to_compare) as i8) < 0;
         self.zero = self.y == to_compare;
         self.carry = self.y >= to_compare;
+    }
+
+    // Equivalent to dec then cmp
+    fn dcp(&mut self, mode: AddressingMode) {
+        self.dec(mode);
+        self.cmp(mode);
     }
 
     fn dec(&mut self, mode: AddressingMode) {
@@ -1517,6 +1855,12 @@ impl<'a> Cpu<'a> {
         self.zero = self.y == 0;
     }
 
+    // Equivalent to inc then sbc
+    fn isc(&mut self, mode: AddressingMode) {
+        self.inc(mode);
+        self.sbc(mode);
+    }
+
     fn jmp(&mut self, mode: AddressingMode) {
         match mode {
             AddressingMode::Absolute(addr) => {
@@ -1547,8 +1891,22 @@ impl<'a> Cpu<'a> {
         }
     }
 
+    // Shortcut for lda then tax
+    fn lax(&mut self, mode: AddressingMode) {
+        // lda
+        self.accumulator = self.read_with_addressing_mode(mode);
+
+        self.sign = (self.accumulator as i8) < 0;
+        self.zero = self.accumulator == 0;
+
+        // tax
+        self.x = self.accumulator;
+    }
+
     fn lda(&mut self, mode: AddressingMode) {
         self.accumulator = self.read_with_addressing_mode(mode);
+
+        println!("Loaded {} into A", self.accumulator);
 
         self.sign = (self.accumulator as i8) < 0;
         self.zero = self.accumulator == 0;
@@ -1584,6 +1942,7 @@ impl<'a> Cpu<'a> {
 
     fn ora(&mut self, mode: AddressingMode) {
         self.accumulator |= self.read_with_addressing_mode(mode);
+        println!("Accumulator result: {:02X}", self.accumulator);
 
         self.sign = (self.accumulator as i8) < 0;
         self.zero = self.accumulator == 0;
@@ -1597,8 +1956,8 @@ impl<'a> Cpu<'a> {
     fn php(&mut self) {
         let processor_status: u8 = ((self.sign as u8) << 7)
             | ((self.overflow as u8) << 6)
-            | ((0 as u8) << 5)
-            | ((self.brk as u8) << 4)
+            | ((1 as u8) << 5)
+            | ((1 as u8) << 4)
             | ((self.decimal as u8) << 3)
             | ((self.interrupt as u8) << 2)
             | ((self.zero as u8) << 1)
@@ -1610,6 +1969,9 @@ impl<'a> Cpu<'a> {
     fn pla(&mut self) {
         self.accumulator = self.memory.get_byte_at(0x100 + u16::from(self.sp));
         self.sp = self.sp.wrapping_add(1);
+
+        self.zero = self.accumulator == 0;
+        self.sign = (self.accumulator as i8) < 0;
     }
 
     fn plp(&mut self) {
@@ -1619,11 +1981,17 @@ impl<'a> Cpu<'a> {
         self.sign = (processor_flags & (1 << 7)) != 0;
         self.overflow = (processor_flags & (1 << 6)) != 0;
         let _ = (processor_flags & (1 << 5)) != 0;
-        self.brk = (processor_flags & (1 << 4)) != 0;
+        let _ = (processor_flags & (1 << 4)) != 0;
         self.decimal = (processor_flags & (1 << 3)) != 0;
         self.interrupt = (processor_flags & (1 << 2)) != 0;
         self.zero = (processor_flags & (1 << 1)) != 0;
         self.carry = (processor_flags & (1 << 0)) != 0;
+    }
+
+    // Equivalent to rol then and
+    fn rla(&mut self, mode: AddressingMode) {
+        self.rol(mode);
+        self.and(mode);
     }
 
     fn rol(&mut self, mode: AddressingMode) {
@@ -1646,6 +2014,12 @@ impl<'a> Cpu<'a> {
         self.carry = (to_be_rored & (1 << 0)) != 0;
     }
 
+    // Equivalent to ror then adc
+    fn rra(&mut self, mode: AddressingMode) {
+        self.ror(mode);
+        self.adc(mode);
+    }
+
     fn rti(&mut self) {
         // Pull processor flags from stack
         self.plp();
@@ -1660,13 +2034,31 @@ impl<'a> Cpu<'a> {
         self.sp = self.sp.wrapping_add(2);
     }
 
-    fn sbc(&mut self, mode: AddressingMode) {
-        let to_be_subbed = self.read_with_addressing_mode(mode);
+    fn sax(&mut self, mode: AddressingMode) {
+        let to_be_anded = self.read_with_addressing_mode(mode);
+        let result = to_be_anded & self.accumulator;
 
-        let (first_sub, first_carry) = self.accumulator.overflowing_sub(to_be_subbed);
-        let (result, second_carry) = first_sub.overflowing_sub(u8::from(self.carry));
+        self.write_with_addressing_mode(mode, result);
+    }
+
+    fn sbc(&mut self, mode: AddressingMode) {
+        // We can take advantage of:
+        // A - M - (1 - C)
+        // A + !M + 1 - (1 - C)
+        // A + !M + 1 + C - 1
+        // A + !M + C -> same as adc
+
+        let to_be_added = !self.read_with_addressing_mode(mode);
+        let old_accumulator = self.accumulator;
+
+        let (first_add, first_carry) = old_accumulator.overflowing_add(to_be_added);
+        let (result, second_carry) = first_add.overflowing_add(u8::from(self.carry));
 
         self.accumulator = result;
+        self.sign = (result as i8) < 0;
+        self.zero = result == 0;
+        self.overflow = ((to_be_added ^ result) & (old_accumulator ^ result) & 0x80) != 0;
+        self.carry = first_carry | second_carry;
     }
 
     fn sec(&mut self) {
@@ -1678,7 +2070,19 @@ impl<'a> Cpu<'a> {
     }
 
     fn sei(&mut self) {
-        self.interrupt = false;
+        self.interrupt = true;
+    }
+
+    // Equivalent to asl then ora
+    fn slo(&mut self, mode: AddressingMode) {
+        self.asl(mode);
+        self.ora(mode);
+    }
+
+    // Equivalent to lsr then eor
+    fn sre(&mut self, mode: AddressingMode) {
+        self.lsr(mode);
+        self.eor(mode);
     }
 
     fn sta(&mut self, mode: AddressingMode) {
@@ -1695,18 +2099,30 @@ impl<'a> Cpu<'a> {
 
     fn tax(&mut self) {
         self.x = self.accumulator;
+
+        self.zero = self.x == 0;
+        self.sign = (self.x as i8) < 0;
     }
 
     fn tay(&mut self) {
         self.y = self.accumulator;
+
+        self.zero = self.y == 0;
+        self.sign = (self.y as i8) < 0;
     }
 
     fn tsx(&mut self) {
         self.x = self.sp;
+
+        self.zero = self.x == 0;
+        self.sign = (self.x as i8) < 0;
     }
 
     fn txa(&mut self) {
         self.accumulator = self.x;
+
+        self.zero = self.accumulator == 0;
+        self.sign = (self.accumulator as i8) < 0;
     }
 
     fn txs(&mut self) {
@@ -1715,5 +2131,8 @@ impl<'a> Cpu<'a> {
 
     fn tya(&mut self) {
         self.accumulator = self.y;
+
+        self.zero = self.accumulator == 0;
+        self.sign = (self.accumulator as i8) < 0;
     }
 }
