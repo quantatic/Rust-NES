@@ -1,4 +1,4 @@
-use crate::memory::Memory;
+use crate::bus::Bus;
 
 pub struct Cpu<'a> {
     pub pc: u16,
@@ -6,13 +6,15 @@ pub struct Cpu<'a> {
     pub accumulator: u8,
     pub x: u8,
     pub y: u8,
+    pub cycles_left: u8,
+    pub cycles_completed: u64,
     pub carry: bool,
     pub zero: bool,
     pub interrupt: bool,
     pub decimal: bool,
     pub overflow: bool,
     pub sign: bool,
-    pub memory: &'a mut Memory,
+    pub bus: &'a mut Bus,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -41,31 +43,68 @@ pub struct Instruction {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Interrupt {
-    Irq,
-    Nmi,
-    Reset
+    Irq,    // maskable interrupt
+    Nmi,    // non-maskable interrupt
+    Reset   // reset interrupt
 }
 
 impl<'a> Cpu<'a> {
-    pub fn new(memory: &'a mut Memory) -> Self {
+    pub fn new(bus: &'a mut Bus) -> Self {
         Cpu {
             pc: 0x0,
             sp: 0x0,
             accumulator: 0x0,
             x: 0x0,
             y: 0x0,
+            cycles_left: 0x0,
+            cycles_completed: 0x0,
             carry: false,
             zero: false,
             interrupt: false,
             decimal: false,
             overflow: false,
             sign: false,
-            memory,
+            bus,
         }
     }
 
+    pub fn step(&mut self) {
+        if self.cycles_left > 0 {
+            self.cycles_left -= 1;
+            self.cycles_completed += 1;
+            return;
+        }
+
+        let pc = self.pc;
+        let processor_status: u8 = ((self.sign as u8) << 7)
+            | ((self.overflow as u8) << 6)
+            | ((1 as u8) << 5)
+            | ((0 as u8) << 4)
+            | ((self.decimal as u8) << 3)
+            | ((self.interrupt as u8) << 2)
+            | ((self.zero as u8) << 1)
+            | ((self.carry as u8) << 0);
+        let a = self.accumulator;
+        let x = self.x;
+        let y = self.y;
+        let sp = self.sp;
+        if self.bus.ppu.nmi_waiting {
+            self.bus.ppu.nmi_waiting = false;
+            self.interrupt(Interrupt::Nmi);
+        } else {
+            let next_instruction = self.fetch_next_instruction();
+            //println!("{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}  CYC:{}", pc, a, x, y, processor_status, sp, self.cycles_completed);
+            //println!("{:04X} -> {:?}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}  CYC:{}", pc, next_instruction, a, x, y, processor_status, sp, self.cycles_completed);
+            self.execute_instruction(next_instruction);
+            self.cycles_left += next_instruction.cycles;
+        }
+
+        self.cycles_left -= 1;
+        self.cycles_completed += 1;
+    }
+
     fn push_byte(&mut self, val: u8) {
-        self.memory.set_byte_at(0x100 + u16::from(self.sp), val);
+        self.bus.set_byte_at(0x100 + u16::from(self.sp), val);
         self.sp = self.sp.wrapping_sub(1);
     }
 
@@ -79,7 +118,7 @@ impl<'a> Cpu<'a> {
 
     fn pop_byte(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        return self.memory.get_byte_at(0x100 + u16::from(self.sp));
+        return self.bus.get_byte_at(0x100 + u16::from(self.sp));
     }
 
     fn pop_word(&mut self) -> u16 {
@@ -97,17 +136,19 @@ impl<'a> Cpu<'a> {
 
         self.interrupt = true;
         self.pc = match int_type {
-            Interrupt::Irq => self.memory.get_word_at(0xFFFE),
-            Interrupt::Nmi => self.memory.get_word_at(0xFFFA),
-            Interrupt::Reset => self.memory.get_word_at(0xFFFC),
+            Interrupt::Irq => self.bus.get_word_at(0xFFFE),
+            Interrupt::Nmi => self.bus.get_word_at(0xFFFA),
+            Interrupt::Reset => self.bus.get_word_at(0xFFFC),
         };
+
+        self.cycles_left = 7;
     }
 
     pub fn fetch_next_instruction(&mut self) -> Instruction {
-        let opcode: u8 = self.memory.get_byte_at(self.pc);
-        let byte_after_opcode: u8 = self.memory.get_byte_at(self.pc + 1);
+        let opcode: u8 = self.bus.get_byte_at(self.pc);
+        let byte_after_opcode: u8 = self.bus.get_byte_at(self.pc + 1);
         let signed_byte_after_opcode: i8 = byte_after_opcode as i8;
-        let word_after_opcode: u16 = self.memory.get_word_at(self.pc + 1);
+        let word_after_opcode: u16 = self.bus.get_word_at(self.pc + 1);
 
         //println!("Opcode: 0x{:02x}", opcode);
         let result = match opcode {
@@ -299,7 +340,7 @@ impl<'a> Cpu<'a> {
             0x00 => Instruction {
                 opcode: Opcode::Brk,
                 mode: AddressingMode::Implicit,
-                cycles: 7,
+                cycles: 0, // this generates an interrupt which adds the right number of cycles itself
                 page_cross_cost: false,
             },
             /* Bvc */
@@ -1560,7 +1601,7 @@ impl<'a> Cpu<'a> {
         result
     }
 
-    pub fn execute_instruction(&mut self, instruction: Instruction) -> u8 {
+    pub fn execute_instruction(&mut self, instruction: Instruction) {
         match instruction.opcode {
             Opcode::Add => self.adc(instruction.mode),
             Opcode::And => self.and(instruction.mode),
@@ -1627,28 +1668,27 @@ impl<'a> Cpu<'a> {
             Opcode::Txs => self.txs(),
             Opcode::Tya => self.tya(),
         }
-        0x0
     }
 
     fn read_with_addressing_mode(&mut self, mode: AddressingMode) -> u8 {
         match mode {
-            AddressingMode::ZeroPage(val) => self.memory.get_byte_at(u16::from(val)),
-            AddressingMode::ZeroPageX(val) => self.memory.get_byte_at(u16::from(val.wrapping_add(self.x))),
-            AddressingMode::ZeroPageY(val) => self.memory.get_byte_at(u16::from(val.wrapping_add(self.y))),
-            AddressingMode::Absolute(addr) => self.memory.get_byte_at(addr),
-            AddressingMode::AbsoluteX(val) => self.memory.get_byte_at(val + u16::from(self.x)),
-            AddressingMode::AbsoluteY(val) => self.memory.get_byte_at(val.wrapping_add(u16::from(self.y))),
+            AddressingMode::ZeroPage(val) => self.bus.get_byte_at(u16::from(val)),
+            AddressingMode::ZeroPageX(val) => self.bus.get_byte_at(u16::from(val.wrapping_add(self.x))),
+            AddressingMode::ZeroPageY(val) => self.bus.get_byte_at(u16::from(val.wrapping_add(self.y))),
+            AddressingMode::Absolute(addr) => self.bus.get_byte_at(addr),
+            AddressingMode::AbsoluteX(val) => self.bus.get_byte_at(val + u16::from(self.x)),
+            AddressingMode::AbsoluteY(val) => self.bus.get_byte_at(val.wrapping_add(u16::from(self.y))),
             AddressingMode::IndirectX(val) => {
-                let low_byte = self.memory.get_byte_at((val.wrapping_add(self.x)) as u16);
-                let high_byte = self.memory.get_byte_at((val.wrapping_add(self.x).wrapping_add(1)) as u16);
+                let low_byte = self.bus.get_byte_at((val.wrapping_add(self.x)) as u16);
+                let high_byte = self.bus.get_byte_at((val.wrapping_add(self.x).wrapping_add(1)) as u16);
                 let indirect_addr = ((high_byte as u16) << 8) | (low_byte as u16);
-                self.memory.get_byte_at(indirect_addr)
+                self.bus.get_byte_at(indirect_addr)
             },
             AddressingMode::IndirectY(val) => {
-                let low_byte = self.memory.get_byte_at(val as u16);
-                let high_byte = self.memory.get_byte_at((val.wrapping_add(1)) as u16);
+                let low_byte = self.bus.get_byte_at(val as u16);
+                let high_byte = self.bus.get_byte_at((val.wrapping_add(1)) as u16);
                 let indirect_addr = ((((high_byte as u16) << 8) | (low_byte as u16))).wrapping_add(self.y as u16);
-                self.memory.get_byte_at(indirect_addr)
+                self.bus.get_byte_at(indirect_addr)
             },
             AddressingMode::Immediate(val) => val,
             AddressingMode::Accumulator => self.accumulator,
@@ -1658,23 +1698,23 @@ impl<'a> Cpu<'a> {
 
     fn write_with_addressing_mode(&mut self, mode: AddressingMode, assigned_val: u8) {
         match mode {
-            AddressingMode::ZeroPage(val) => self.memory.set_byte_at(u16::from(val), assigned_val),
-            AddressingMode::ZeroPageX(val) => self.memory.set_byte_at(u16::from(val.wrapping_add(self.x)), assigned_val),
-            AddressingMode::ZeroPageY(val) => self.memory.set_byte_at(u16::from(val.wrapping_add(self.y)), assigned_val),
-            AddressingMode::Absolute(addr) => self.memory.set_byte_at(addr, assigned_val),
-            AddressingMode::AbsoluteX(val) => self.memory.set_byte_at(val + u16::from(self.x), assigned_val),
-            AddressingMode::AbsoluteY(val) => self.memory.set_byte_at(val + u16::from(self.y), assigned_val),
+            AddressingMode::ZeroPage(val) => self.bus.set_byte_at(u16::from(val), assigned_val),
+            AddressingMode::ZeroPageX(val) => self.bus.set_byte_at(u16::from(val.wrapping_add(self.x)), assigned_val),
+            AddressingMode::ZeroPageY(val) => self.bus.set_byte_at(u16::from(val.wrapping_add(self.y)), assigned_val),
+            AddressingMode::Absolute(addr) => self.bus.set_byte_at(addr, assigned_val),
+            AddressingMode::AbsoluteX(val) => self.bus.set_byte_at(val + u16::from(self.x), assigned_val),
+            AddressingMode::AbsoluteY(val) => self.bus.set_byte_at(val + u16::from(self.y), assigned_val),
             AddressingMode::IndirectX(val) => {
-                let low_byte = self.memory.get_byte_at((val.wrapping_add(self.x)) as u16);
-                let high_byte = self.memory.get_byte_at((val.wrapping_add(self.x).wrapping_add(1)) as u16);
+                let low_byte = self.bus.get_byte_at((val.wrapping_add(self.x)) as u16);
+                let high_byte = self.bus.get_byte_at((val.wrapping_add(self.x).wrapping_add(1)) as u16);
                 let indirect_addr = ((high_byte as u16) << 8) | (low_byte as u16);
-                self.memory.set_byte_at(indirect_addr, assigned_val);
+                self.bus.set_byte_at(indirect_addr, assigned_val);
             },
             AddressingMode::IndirectY(val) => {
-                let low_byte = self.memory.get_byte_at(val as u16);
-                let high_byte = self.memory.get_byte_at((val.wrapping_add(1)) as u16);
+                let low_byte = self.bus.get_byte_at(val as u16);
+                let high_byte = self.bus.get_byte_at((val.wrapping_add(1)) as u16);
                 let indirect_addr = ((((high_byte as u16) << 8) | (low_byte as u16))).wrapping_add(self.y as u16);
-                self.memory.set_byte_at(indirect_addr, assigned_val);
+                self.bus.set_byte_at(indirect_addr, assigned_val);
             },
             AddressingMode::Accumulator => self.accumulator = assigned_val,
             _ => panic!("Attempted to write to address value of {:?} illegally", mode),
@@ -1716,7 +1756,16 @@ impl<'a> Cpu<'a> {
 
     fn branch(&mut self, condition: bool, offset: i8) {
         if condition {
-            self.pc = (self.pc as i32 + offset as i32) as u16;
+            // If branch is taken, add 1 cycle
+            self.cycles_left += 1;
+            let new_pc = (self.pc as i32 + offset as i32) as u16;
+
+            // If branch is to new page, add 1 more cycle
+            if (new_pc / 0x100) != (self.pc / 0x100) {
+                self.cycles_left += 1;
+            }
+
+            self.pc = new_pc;
         }
     }
 
@@ -1771,7 +1820,8 @@ impl<'a> Cpu<'a> {
     }
 
     fn brk(&mut self, mode: AddressingMode) {
-        panic!("TODO");
+        self.interrupt(Interrupt::Irq);
+        //self.pc += 1; //brk requires a padding byte
     }
 
     fn bvc(&mut self, mode: AddressingMode) {
@@ -1901,11 +1951,11 @@ impl<'a> Cpu<'a> {
             // jmp (xxFF) will read from xxFF and xx00 instead of crossing page boundary.
             AddressingMode::Indirect(addr) => {
                 if addr & 0x00FF == 0xFF {
-                    let low_byte = self.memory.get_byte_at(addr);
-                    let high_byte = self.memory.get_byte_at(addr & 0xFF00);
+                    let low_byte = self.bus.get_byte_at(addr);
+                    let high_byte = self.bus.get_byte_at(addr & 0xFF00);
                     self.pc = ((high_byte as u16) << 8) | (low_byte as u16);
                 } else {
-                    self.pc = self.memory.get_word_at(addr);
+                    self.pc = self.bus.get_word_at(addr);
                 }
             },
             _ => panic!("Cannot jmp using {:?}", mode),

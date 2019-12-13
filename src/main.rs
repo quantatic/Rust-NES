@@ -1,37 +1,50 @@
 mod cpu;
-mod memory;
+mod bus;
 mod ppu;
 mod rom;
 
 use crate::cpu::{Cpu, Interrupt};
-use crate::memory::Memory;
+use crate::bus::Bus;
 use crate::ppu::Ppu;
 use crate::rom::Rom;
 
 fn main() {
+    let rom = Rom::new("roms/palette.nes").unwrap();
     let rom = Rom::new("roms/donkey.nes").unwrap();
-    let ppu = Ppu::new();
+    //let rom = Rom::new("roms/balloon.nes").unwrap();
+    //let rom = Rom::new("roms/color_test.nes").unwrap();
+    //let rom = Rom::new("roms/nestest.nes").unwrap();
+    //let rom = Rom::new("roms/mario.nes").unwrap();
 
-    let mut memory = Memory::new(rom, ppu);
-    let mut cpu = Cpu::new(&mut memory);
+    let sdl_context = sdl2::init()
+        .unwrap();
+
+    let ppu = Ppu::new(&sdl_context);
+
+    let mut bus = Bus::new(rom, ppu);
+    let mut cpu = Cpu::new(&mut bus);
+
     cpu.interrupt(Interrupt::Reset);
 
+    let mut master_clock_ticks: u64 = 0;
+
+    // Master clocks run at 21.477272 MHz
     loop {
-        let pc = cpu.pc;
-        let processor_status: u8 = ((cpu.sign as u8) << 7)
-            | ((cpu.overflow as u8) << 6)
-            | ((1 as u8) << 5)
-            | ((0 as u8) << 4)
-            | ((cpu.decimal as u8) << 3)
-            | ((cpu.interrupt as u8) << 2)
-            | ((cpu.zero as u8) << 1)
-            | ((cpu.carry as u8) << 0);
-        let a = cpu.accumulator;
-        let x = cpu.x;
-        let y = cpu.y;
-        let sp = cpu.sp;
-        let next_instruction = cpu.fetch_next_instruction();
-        println!("{:04X} -> {:X?}\t{:X?}\tA:{:02X}\tX:{:02X}\tY:{:02X}\tP:{:02X}\tSP:{:02X}", pc, next_instruction.opcode, next_instruction.mode, a, x, y, processor_status, sp);
-        cpu.execute_instruction(next_instruction);
+        // CPU runs every 12 master ticks
+        if master_clock_ticks % 12 == 0 {
+            cpu.step();
+        }
+
+        // PPU runs every 4 master ticks
+        if master_clock_ticks % 4 == 0 {
+            cpu.bus.ppu.step();
+        }
+
+        // Very slow -- figure out why?
+        if master_clock_ticks % 10000 == 0 {
+            cpu.bus.ppu.check_for_exit();
+        }
+
+        master_clock_ticks += 1;
     }
 }
