@@ -93,7 +93,7 @@ impl<'a> Cpu<'a> {
             self.interrupt(Interrupt::Nmi);
         } else {
             let next_instruction = self.fetch_next_instruction();
-            //println!("{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}  CYC:{}", pc, a, x, y, processor_status, sp, self.cycles_completed);
+            //println!("{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}", pc, a, x, y, processor_status, sp);
             //println!("{:04X} -> {:?}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}  CYC:{}", pc, next_instruction, a, x, y, processor_status, sp, self.cycles_completed);
             self.execute_instruction(next_instruction);
             self.cycles_left += next_instruction.cycles;

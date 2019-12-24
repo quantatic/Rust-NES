@@ -131,6 +131,7 @@ impl Ppu {
 
     pub fn get_vram_byte_at(&mut self, addr: u16) -> u8 {
         let mut actual_addr = addr % 0x4000;
+
         // palettes are mirrored from 0x3F00 to 0x4000 every 0x20 bytes
         if actual_addr >= 0x3F00 {
             actual_addr = ((actual_addr - 0x3F00) % 0x20) + 0x3F00;
@@ -142,6 +143,12 @@ impl Ppu {
     pub fn set_vram_byte_at(&mut self, addr: u16, val: u8) {
         let mut actual_addr = addr % 0x4000;
         // palettes are mirrored from 0x3F00 to 0x4000 every 0x20 bytes
+
+        if addr == 0x23CC {
+            //panic!();
+            //println!("Writing 0x{:02X} here!", val);
+        }
+
         if actual_addr >= 0x3F00 {
             actual_addr = ((actual_addr - 0x3F00) % 0x20) + 0x3F00;
         }
@@ -165,13 +172,28 @@ impl Ppu {
     }
 
     fn get_pixel_at(&mut self, x: u8, y: u8) -> Color {
+
         let tile_x = x / 8;
         let tile_y = y / 8;
         let nametable_idx = u16::from(tile_x) + (u16::from(tile_y) * 32);
-        let pattern_idx = self.get_vram_byte_at(0x2000 + u16::from(nametable_idx));
+        let nametable_base = match self.ppuctrl & 0b00000011 {
+            0x0 => 0x2000,
+            0x1 => 0x2400,
+            0x2 => 0x2800,
+            0x3 => 0x2C00,
+            _ => panic!(),
+        };
 
-        let pattern_0 = self.get_vram_byte_at(0x1000 + (u16::from(pattern_idx) * 16) + u16::from(y % 8));
-        let pattern_1 = self.get_vram_byte_at(0x1000 + (u16::from(pattern_idx) * 16) + u16::from(y % 8) + 8);
+        let pattern_idx = self.get_vram_byte_at(nametable_base + u16::from(nametable_idx));
+
+        let background_pattern_table_base = match (self.ppuctrl >> 4) & 0b00000001 {
+            0x0 => 0x0000,
+            0x1 => 0x1000,
+            _ => panic!(),
+        };
+
+        let pattern_0 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(y % 8));
+        let pattern_1 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(y % 8) + 8);
 
         // bit offset into pattern_0 and pattern_1 are overlaid
 
@@ -194,8 +216,6 @@ impl Ppu {
             (1, 1) => (attribute_data >> 6) & 0b00000011,
             _ => panic!(),
         };
-
-        //println!("{:02b} {:02b} {:02b} {:02b}", (attribute_data >> 0) & 0b00000011, (attribute_data >> 2) & 0b00000011, (attribute_data >> 4) & 0b00000011, (attribute_data >> 6) & 0b00000011);
 
         let pattern_final = pattern_low | (pattern_high << 2);
 
@@ -233,13 +253,11 @@ impl Ppu {
         self.canvas.set_draw_color(curr_pixel_color);
         self.canvas.fill_rect(Rect::new(self.dot as i32, self.scanline as i32, 1, 1)).unwrap();
 
-
         let (new_dot, hblank) = self.dot.overflowing_add(1);
         self.dot = new_dot;
         if hblank {
             self.scanline += 1;
-            let vblank = self.scanline == 240;
-            if vblank {
+            if self.scanline == 240 {
                 //Nmi only occurs on vblank if ppuctrl bit 7 is set
                 self.nmi_waiting = (self.ppuctrl & (1 << 7)) != 0;
                 self.scanline = 0;
