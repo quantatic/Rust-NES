@@ -144,14 +144,14 @@ impl Ppu {
         let mut actual_addr = addr % 0x4000;
         // palettes are mirrored from 0x3F00 to 0x4000 every 0x20 bytes
 
-        if addr == 0x23CC {
-            //panic!();
-            //println!("Writing 0x{:02X} here!", val);
-        }
-
         if actual_addr >= 0x3F00 {
             actual_addr = ((actual_addr - 0x3F00) % 0x20) + 0x3F00;
         }
+
+        if actual_addr >= 0x27C0 && actual_addr <= 0x27FF {
+            actual_addr -= 0x0400;
+        }
+
         self.vram[usize::from(actual_addr)] = val;
     }
 
@@ -172,7 +172,6 @@ impl Ppu {
     }
 
     fn get_pixel_at(&mut self, x: u8, y: u8) -> Color {
-
         let tile_x = x / 8;
         let tile_y = y / 8;
         let nametable_idx = u16::from(tile_x) + (u16::from(tile_y) * 32);

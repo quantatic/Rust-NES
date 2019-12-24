@@ -94,7 +94,7 @@ impl<'a> Cpu<'a> {
         } else {
             let next_instruction = self.fetch_next_instruction();
             //println!("{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}", pc, a, x, y, processor_status, sp);
-            //println!("{:04X} -> {:?}  A:{:02X}  X:{:02X}  Y:{:02X}  P:{:02X}  SP:{:02X}  CYC:{}", pc, next_instruction, a, x, y, processor_status, sp, self.cycles_completed);
+            //println!("{:04X} -> {:X?}\tA:{:02X}\tX:{:02X}\tY:{:02X}\tP:{:02X}\tSP:{:02X}\tCYC:{}\tV:0x{:04X}", pc, next_instruction, a, x, y, processor_status, sp, self.cycles_completed, self.bus.ppu.ppuaddr);
             self.execute_instruction(next_instruction);
             self.cycles_left += next_instruction.cycles;
         }
@@ -149,7 +149,6 @@ impl<'a> Cpu<'a> {
         let byte_after_opcode: u8 = self.bus.get_byte_at(self.pc + 1);
         let signed_byte_after_opcode: i8 = byte_after_opcode as i8;
         let word_after_opcode: u16 = self.bus.get_word_at(self.pc + 1);
-
         //println!("Opcode: 0x{:02x}", opcode);
         let result = match opcode {
             /* Add */
