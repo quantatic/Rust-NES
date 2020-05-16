@@ -38,13 +38,17 @@ impl Bus {
                     // Reading from ppustatus register clears bit 7 (v-blank)
                     0x2002 => {
                         let result = self.ppu.ppustatus;
-                        self.ppu.ppustatus &= 0b01111111;
+                        self.ppu.ppustatus &= 0b01111111; // clear vblank when we read 0x2002
                         self.ppu.ppuscroll = 0;
                         self.ppu.ppuaddr = 0;
                         self.ppu.two_write_partial = false;
                         result
                     },
-                    0x2003..=0x2006 => panic!("Not allowed to read from 0x{:04X}", addr),
+					0x2003 => panic!("Not allowed to read from 0x2003"),
+					0x2004 => {
+						self.ppu.get_oam_byte_at(self.ppu.oamaddr)
+					},
+                    0x2005..=0x2006 => panic!("Not allowed to read from 0x{:04X}", addr),
                     0x2007 => {
                         self.ppu.get_vram_byte_at(self.ppu.ppuaddr)
                     },
@@ -87,7 +91,11 @@ impl Bus {
                     0x2001 => self.ppu.ppumask = val,
                     0x2002 => panic!("Not allowed to write to 0x{:04x}", addr),
                     0x2003 => self.ppu.oamaddr = val,
-                    0x2004 => panic!("Writing to SPR-RAM at 0x{:04x}", self.ppu.oamdata),
+                    0x2004 => {
+						self.ppu.set_oam_byte_at(self.ppu.oamaddr, val);
+						// After writing, we need to increment oamaddr
+						self.ppu.oamaddr = self.ppu.oamaddr.wrapping_add(1);
+					},
                     0x2005 => {
                         match self.ppu.two_write_partial {
                             false => self.ppu.ppuscroll |= ((val as u16) << 8),
@@ -110,7 +118,8 @@ impl Bus {
                             0x1
                         } else {
                             0x20
-                        }
+                        };
+						println!("ppuaddr: {}", self.ppu.ppuaddr);
                     },
                     _ => panic!(),
                 }
@@ -135,7 +144,7 @@ impl Bus {
                 }
                 self.rom.prg_rom[usize::from(rom_access_addr)] = val;
             },
-            _ => panic!("Don't know how to write to 0x{:05x}", addr),
+			addr => println!("Ignoring write of {} to 0x{:05x} for now", char::from(val), addr),
         }
     }
 

@@ -4,6 +4,10 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
+use std::convert::TryFrom;
+
+const SCALE: u32 = 2;
+
 pub const PALETTE: [Color; 0x40] = [
     Color { r: 0x75, g: 0x75, b: 0x75, a: 0xFF }, //0x00
     Color { r: 0x27, g: 0x1B, b: 0x8F, a: 0xFF }, //0x01
@@ -84,9 +88,10 @@ pub struct Ppu {
     pub oam: [u8; 0x100],
     pub canvas: Canvas<Window>,
     pub events: sdl2::EventPump,
-    pub scanline: u8,
-    pub dot: u8,
+    pub scanline: u16,
+    pub cycle: u16,
     pub nmi_waiting: bool,
+	pub tmp: u32
 }
 
 impl Ppu {
@@ -96,7 +101,7 @@ impl Ppu {
             .unwrap();
 
         let window = video_subsystem
-            .window("NES Terminal Window", 256, 240)
+            .window("NES Terminal Window", 256 * SCALE, 240 * SCALE)
             .position_centered()
             .build()
             .unwrap();
@@ -124,8 +129,9 @@ impl Ppu {
             canvas,
             events,
             scanline: 0x0,
-            dot: 0x0,
+            cycle: 0x0,
             nmi_waiting: false,
+			tmp: 0
         }
     }
 
@@ -185,11 +191,28 @@ impl Ppu {
 
         let pattern_idx = self.get_vram_byte_at(nametable_base + u16::from(nametable_idx));
 
-        let background_pattern_table_base = match (self.ppuctrl >> 4) & 0b00000001 {
-            0x0 => 0x0000,
-            0x1 => 0x1000,
-            _ => panic!(),
-        };
+		let sprite_pattern_table_base = if self.ppuctrl & (1 << 3) == 0 {
+			0x0000
+		} else {
+			0x1000
+		};
+
+		let background_pattern_table_base = if self.ppuctrl & (1 << 4) == 0 {
+			0x0000
+		} else {
+			0x1000
+		};
+
+		let sprite_size = self.ppuctrl & (1 << 5);
+
+		let grayscale = self.ppumask & (1 << 0) != 0;
+		if grayscale {
+			panic!("don't know how to handle grayscale!");
+		}
+
+		if sprite_size != 0 {
+			panic!("uh oh! don't know how to handle sprite size: {}", sprite_size);
+		}
 
         let pattern_0 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(y % 8));
         let pattern_1 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(y % 8) + 8);
@@ -218,9 +241,8 @@ impl Ppu {
 
         let pattern_final = pattern_low | (pattern_high << 2);
 
-        let palette_idx = self.get_vram_byte_at(0x3F00 + u16::from(pattern_final));
+        let background_palette_idx = self.get_vram_byte_at(0x3F00 + u16::from(pattern_final));
 
-        let mut sprite_here = false;
         for sprite_idx in 0..16u8 {
             let sprite_y = self.oam[usize::from(sprite_idx * 4)];
             let pattern_idx = self.oam[usize::from(sprite_idx * 4 + 1)];
@@ -228,13 +250,18 @@ impl Ppu {
             let sprite_x = self.oam[usize::from(sprite_idx * 4 + 3)];
 
             if x >= sprite_x && x < (sprite_x + 8) && y >= sprite_y && y < (sprite_y + 8) {
-                return PALETTE[0x15];
                 let pattern_0 = self.get_vram_byte_at((u16::from(pattern_idx) * 16) + u16::from(y - sprite_y));
                 let pattern_1 = self.get_vram_byte_at((u16::from(pattern_idx) * 16) + u16::from(y - sprite_y) + 8);
 
+				let strip_offset = if attributes & (1 << 6) == 0 {
+					7 - (x - sprite_x)
+				} else {
+					x - sprite_x
+				};
+
                 // bit offset into pattern_0 and pattern_1 are overlaid
-                let pattern_low = ((pattern_0 & (1 << (x - sprite_x))) >> (x - sprite_x)) |
-                                   (((pattern_1 & (1 << (x - sprite_x))) >> (x - sprite_x)) << 1);
+                let pattern_low = ((pattern_0 & (1 << strip_offset)) >> strip_offset) |
+                                   (((pattern_1 & (1 << strip_offset)) >> strip_offset) << 1);
                 let pattern_high = attributes & 0b00000011;
                 let pattern_final = pattern_low | (pattern_high << 2);
                 let palette_idx = self.get_vram_byte_at(0x3F10 + u16::from(pattern_final));
@@ -243,27 +270,53 @@ impl Ppu {
             }
         }
 
-        PALETTE[usize::from(palette_idx)]
+        PALETTE[usize::from(background_palette_idx)]
     }
 
     pub fn step(&mut self) {
-        /* Psuedo-draw */
-        let curr_pixel_color = self.get_pixel_at(self.dot, self.scanline);
-        self.canvas.set_draw_color(curr_pixel_color);
-        self.canvas.fill_rect(Rect::new(self.dot as i32, self.scanline as i32, 1, 1)).unwrap();
 
-        let (new_dot, hblank) = self.dot.overflowing_add(1);
-        self.dot = new_dot;
-        if hblank {
-            self.scanline += 1;
-            if self.scanline == 240 {
-                //Nmi only occurs on vblank if ppuctrl bit 7 is set
-                self.nmi_waiting = (self.ppuctrl & (1 << 7)) != 0;
-                self.scanline = 0;
-                self.canvas.present();
-                self.ppustatus |= (1 << 7);
-            }
-        }
+		// Cycle is equal to dot + 1. 
+
+		// If we're at the part of the screen to be rendered: render!
+		if self.scanline < 240 {
+			if self.cycle > 0 && self.cycle <= 256 {
+				/* Psuedo-draw */
+				let dot = u8::try_from(self.cycle - 1).unwrap();
+				let scanline = u8::try_from(self.scanline).unwrap();
+
+				let curr_pixel_color = self.get_pixel_at(dot, scanline);
+				self.canvas.set_draw_color(curr_pixel_color);
+				self.canvas.fill_rect(Rect::new(dot as i32 * SCALE as i32, scanline as i32 * SCALE as i32, SCALE, SCALE)).unwrap();
+			}
+		}
+
+		if self.cycle == 1 {
+			if self.scanline == 241 {
+				self.ppustatus |= (1 << 7); // set vblank at dot 1 of scanline 241
+				self.nmi_waiting = (self.ppuctrl & (1 << 7)) != 0; //Nmi only occurs on vblank if ppuctrl bit 7 is set
+				self.tmp = 0;
+			} else if self.scanline == 261 {
+				self.ppustatus &= !(1 << 7); // clear vblank at dot 1 of scanline 261 (pre-render line)
+			}
+		}
+
+		self.tmp += 1;
+		self.cycle += 1;
+
+		if self.cycle > 339 {
+			self.cycle = 0;
+			self.scanline += 1;
+
+			if self.scanline > 261 {
+				self.scanline = 0;
+				self.canvas.present();
+			}
+		}
+
+		// OAMADDR gets set to 0 during ticks 257-320 of pre-render and visible scanlines
+		if (self.scanline == 261 || self.scanline <= 239) && (self.cycle >= 257 && self.cycle <= 320) {
+			self.oamaddr = 0;
+		}
 
     }
 }
