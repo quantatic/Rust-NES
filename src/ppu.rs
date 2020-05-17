@@ -4,8 +4,6 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
-use std::convert::TryFrom;
-
 const SCALE: u32 = 2;
 
 pub const PALETTE: [Color; 0x40] = [
@@ -88,7 +86,6 @@ pub struct Ppu {
     pub vram: [u8; 0x4000],
     pub oam: [u8; 0x100],
     pub canvas: Canvas<Window>,
-    pub events: sdl2::EventPump,
     pub scanline: u16,
     pub cycle: u16,
     pub nmi_waiting: bool,
@@ -96,11 +93,7 @@ pub struct Ppu {
 }
 
 impl Ppu {
-    pub fn new(sdl_context: &sdl2::Sdl) -> Self {
-        let video_subsystem = sdl_context
-            .video()
-            .unwrap();
-
+    pub fn new(video_subsystem: &sdl2::VideoSubsystem) -> Self {
         let window = video_subsystem
             .window("NES Terminal Window", 256 * SCALE, 240 * SCALE)
             .position_centered()
@@ -110,10 +103,6 @@ impl Ppu {
         let canvas = window
             .into_canvas()
             .build()
-            .unwrap();
-
-        let events = sdl_context
-            .event_pump()
             .unwrap();
 
         Self {
@@ -129,7 +118,6 @@ impl Ppu {
             vram: [0; 0x4000],
             oam: [0; 0x100],
             canvas,
-            events,
             scanline: 0x0,
             cycle: 0x0,
             nmi_waiting: false,
@@ -192,14 +180,6 @@ impl Ppu {
 
     pub fn set_oam_byte_at(&mut self, addr: u8, val: u8) {
         self.oam[usize::from(addr)] = val;
-    }
-
-    pub fn check_for_exit(&mut self) {
-        for event in self.events.poll_iter() {
-            if let Event::Quit{ .. } = event {
-                panic!("Exiting!");
-            }
-        }
     }
 
     fn get_pixel_at(&mut self, x: u16, y: u16) -> Color {

@@ -1,17 +1,22 @@
+mod controller;
 mod cpu;
 mod bus;
 mod ppu;
 mod rom;
 
+use crate::controller::Controller;
 use crate::cpu::{Cpu, Interrupt};
 use crate::bus::Bus;
 use crate::ppu::Ppu;
 use crate::rom::Rom;
 
 use std::{thread, time};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 fn main() {
-	let rom = Rom::new("roms/vram_access.nes").unwrap();
+	//let rom = Rom::new("roms/nestest.nes").unwrap();
+	let rom = Rom::new("roms/donkey.nes").unwrap();
     //let rom = Rom::new("roms/full_nes_palette.nes").unwrap();
 	//let rom = Rom::new("roms/color_test.nes").unwrap();
     //let rom = Rom::new("roms/mario.nes").unwrap();
@@ -26,10 +31,18 @@ fn main() {
     let sdl_context = sdl2::init()
         .unwrap();
 
-    let ppu = Ppu::new(&sdl_context);
+	let sdl_video_subsystem = sdl_context
+		.video()
+		.unwrap();
 
-    let mut bus = Bus::new(rom, ppu);
-    let mut cpu = Cpu::new(&mut bus);
+	let sdl_events = Rc::new(RefCell::new(sdl_context.event_pump().unwrap()));
+
+    let ppu = Ppu::new(&sdl_video_subsystem);
+
+	let controller = Controller::new(Rc::clone(&sdl_events));
+
+    let bus = Bus::new(rom, ppu, controller);
+    let mut cpu = Cpu::new(bus);
 
     cpu.interrupt(Interrupt::Reset);
 
@@ -47,11 +60,13 @@ fn main() {
             cpu.bus.ppu.step();
         }
 
-        // Very slow -- figure out why?
-        if master_clock_ticks % 100000 == 0 {
-            cpu.bus.ppu.check_for_exit();
-			//thread::sleep(time::Duration::from_micros(500));
-        }
+		if master_clock_ticks % 10000 == 0 { 
+			for event in sdl_events.borrow_mut().poll_iter() {
+				if let sdl2::event::Event::Quit{ .. } = event {
+					panic!("Exiting!");
+				}
+			}
+		}
 
         master_clock_ticks += 1;
     }

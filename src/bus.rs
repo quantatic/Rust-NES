@@ -1,19 +1,24 @@
+use crate::controller::Controller;
 use crate::ppu::Ppu;
-
 use crate::rom::Rom;
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct Bus {
     pub ram: [u8; 0x2000],
     pub rom: Rom,
     pub ppu: Ppu,
+	pub controller: Controller,
 }
 
 impl Bus {
-    pub fn new(rom: Rom, ppu: Ppu) -> Self {
+    pub fn new(rom: Rom, ppu: Ppu, controller: Controller) -> Self {
         let mut res = Self {
             ram: [0u8; 0x2000],
             rom,
-            ppu
+            ppu,
+			controller
         };
 
         for i in 0..res.rom.chr_rom.len() {
@@ -53,11 +58,10 @@ impl Bus {
 						let addr = self.ppu.ppuaddr;
                         let data = self.ppu.get_vram_byte_at(self.ppu.ppuaddr);
 
-
 						// If not reading from palette, the results are buffered (we return the
 						// result of the LAST read). When reading from palette we still update
 						// buffer, but just return the actual value.
-						let returned_data = if (addr % 0x4000) <= 0x3F00 {
+						let returned_data = if (addr % 0x4000) < 0x3F00 {
 							let buffered_data = self.ppu.ppudata_buffer;
 							self.ppu.ppudata_buffer = data;
 							buffered_data
@@ -102,8 +106,16 @@ impl Bus {
                 }
             },
             0x4000..=0x4017 => {
-                //println!("Ignoring read from 0x{:05x} for now", addr);
-                0x0
+				match addr {
+					0x4016 => {
+						self.controller.read() as u8
+					},
+					0x4017 => {
+						//ignore read from controller 2
+						0
+					},
+					_ => panic!("Don't know how to read from 0x{:05x}", addr)
+				}
             },
             0x8000..=0xFFFF => {
                 let mut rom_access_addr = addr - 0x8000;
@@ -179,6 +191,9 @@ impl Bus {
                             self.ppu.set_oam_byte_at(self.ppu.oamaddr.wrapping_add(i), data);
                         }
                     },
+					0x4016 => {
+						self.controller.set_strobe(val & 0x1 != 0);
+					},
                     _ => { }//println!("Ignoring write to 0x{:05x} for now", addr),
                 }
             }

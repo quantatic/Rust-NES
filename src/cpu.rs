@@ -1,6 +1,6 @@
 use crate::bus::Bus;
 
-pub struct Cpu<'a> {
+pub struct Cpu {
     pub pc: u16,
     pub sp: u8,
     pub accumulator: u8,
@@ -14,7 +14,7 @@ pub struct Cpu<'a> {
     pub decimal: bool,
     pub overflow: bool,
     pub sign: bool,
-    pub bus: &'a mut Bus,
+    pub bus: Bus
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -48,8 +48,8 @@ pub enum Interrupt {
     Reset   // reset interrupt
 }
 
-impl<'a> Cpu<'a> {
-    pub fn new(bus: &'a mut Bus) -> Self {
+impl Cpu {
+    pub fn new(bus: Bus) -> Self {
         Cpu {
             pc: 0x0,
             sp: 0x0,
