@@ -50,7 +50,53 @@ impl Bus {
 					},
                     0x2005..=0x2006 => panic!("Not allowed to read from 0x{:04X}", addr),
                     0x2007 => {
-                        self.ppu.get_vram_byte_at(self.ppu.ppuaddr)
+						let addr = self.ppu.ppuaddr;
+                        let data = self.ppu.get_vram_byte_at(self.ppu.ppuaddr);
+
+
+						// If not reading from palette, the results are buffered (we return the
+						// result of the LAST read). When reading from palette we still update
+						// buffer, but just return the actual value.
+						let returned_data = if (addr % 0x4000) <= 0x3F00 {
+							let buffered_data = self.ppu.ppudata_buffer;
+							self.ppu.ppudata_buffer = data;
+							buffered_data
+						} else {
+							// Directly from the docs: When reading while the VRAM address is in the
+							// range 0-$3EFF (i.e., before the palettes), the read will return the
+							// contents of an internal read buffer. This internal buffer is updated
+							// only when reading PPUDATA, and so is preserved across frames. After
+							// the CPU reads and gets the contents of the internal buffer, the PPU will
+							// immediately update the internal buffer with the byte at the current VRAM
+							// address. Thus, after setting the VRAM address, one should first read
+							// this register and discard the result.
+							//
+							// Reading palette data from $3F00-$3FFF works differently. The palette data
+							// is placed immediately on the data bus, and hence no dummy read is required.
+							// Reading the palettes still updates the internal buffer though, but the data
+							// placed in it is the mirrored nametable data that would appear "underneath"
+							// the palette. (Checking the PPU memory map should make this clearer.)
+							//
+							// Buffered data is actually set to the data that WOULD appear in the
+							// mirrored nametable "underneath" this palette. If your brain is tiny
+							// like mine, take a gander at
+							// https://wiki.nesdev.com/w/index.php/PPU_memory_map. The nametable is
+							// mirrored at a size of 0x1000, so since we already know we're gonna
+							// have to look at the mirorred nametable (we're working with palette
+							// now), just subtract 0x1000 and call it a day.
+
+							self.ppu.ppudata_buffer = self.ppu.get_vram_byte_at(self.ppu.ppuaddr - 0x1000);
+
+							data
+						};
+
+                        self.ppu.ppuaddr += if (self.ppu.ppuctrl & (1 << 2)) == 0 {
+                            0x1
+                        } else {
+                            0x20
+                        };
+
+						returned_data
                     },
                     _ => panic!(),
                 }
@@ -98,14 +144,14 @@ impl Bus {
 					},
                     0x2005 => {
                         match self.ppu.two_write_partial {
-                            false => self.ppu.ppuscroll |= ((val as u16) << 8),
+                            false => self.ppu.ppuscroll = ((val as u16) << 8),
                             true => self.ppu.ppuscroll |= (val as u16),
                         };
                         self.ppu.two_write_partial = !self.ppu.two_write_partial;
                     },
                     0x2006 => {
                         match self.ppu.two_write_partial {
-                            false => self.ppu.ppuaddr |= ((val as u16) << 8),
+                            false => self.ppu.ppuaddr = ((val as u16) << 8),
                             true => self.ppu.ppuaddr |= (val as u16),
                         };
                         self.ppu.two_write_partial = !self.ppu.two_write_partial;
@@ -119,7 +165,6 @@ impl Bus {
                         } else {
                             0x20
                         };
-						println!("ppuaddr: {}", self.ppu.ppuaddr);
                     },
                     _ => panic!(),
                 }
