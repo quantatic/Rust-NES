@@ -15,15 +15,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 fn main() {
-	//let rom = Rom::new("roms/nestest.nes").unwrap();
-	let rom = Rom::new("roms/donkey.nes").unwrap();
+	//let rom = Rom::new("roms/donkey.nes").unwrap();
     //let rom = Rom::new("roms/full_nes_palette.nes").unwrap();
 	//let rom = Rom::new("roms/color_test.nes").unwrap();
-    //let rom = Rom::new("roms/mario.nes").unwrap();
+    //let rom = Rom::new("roms/05-nmi_timing.nes").unwrap();
     //let rom = Rom::new("roms/balloon.nes").unwrap();
     //let rom = Rom::new("roms/color_test.nes").unwrap();
     //let rom = Rom::new("roms/nestest.nes").unwrap();
-    //let rom = Rom::new("roms/mario.nes").unwrap();
+    let rom = Rom::new("roms/mario.nes").unwrap();
+	//let rom = Rom::new("roms/ntsc_torture.nes").unwrap();
 	//let rom = Rom::new("roms/scanline.nes").unwrap();
 	//let rom = Rom::new("/home/quantatic/nes-test-roms/blargg_nes_cpu_test5/cpu.nes").unwrap();
 	//let rom = Rom::new("roms/nestest.nes").unwrap();
@@ -45,19 +45,26 @@ fn main() {
     let mut cpu = Cpu::new(bus);
 
     cpu.interrupt(Interrupt::Reset);
-
+	
     let mut master_clock_ticks: u64 = 0;
+	let mut last_frame_start = 0;
 
     // Master clocks run at 21.477272 MHz
     loop {
-        // CPU runs every 12 master ticks
+        // CPU runs every 12 master ticks ;)
         if master_clock_ticks % 12 == 0 {
             cpu.step();
         }
 
         // PPU runs every 4 master ticks
         if master_clock_ticks % 4 == 0 {
-            cpu.bus.ppu.step();
+            let new_frame = cpu.bus.ppu.step();
+			if new_frame {
+				let current_steps = master_clock_ticks / 4;
+				let last_frame_steps = current_steps - last_frame_start;
+				last_frame_start = current_steps;
+				//println!("{}", last_frame_steps);
+			}
         }
 
 		if master_clock_ticks % 10000 == 0 { 

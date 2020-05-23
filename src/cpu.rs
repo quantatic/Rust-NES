@@ -6,7 +6,7 @@ pub struct Cpu {
     pub accumulator: u8,
     pub x: u8,
     pub y: u8,
-    pub cycles_left: u8,
+    pub cycles_left: u16,
     pub cycles_completed: u64,
     pub carry: bool,
     pub zero: bool,
@@ -89,15 +89,16 @@ impl Cpu {
         let y = self.y;
         let sp = self.sp;
         if self.bus.ppu.nmi_waiting {
+			println!("nmi at ({}, {})", self.bus.ppu.dot, self.bus.ppu.scanline);
             self.bus.ppu.nmi_waiting = false;
             self.interrupt(Interrupt::Nmi);
-        } else {
+		} else {
             let next_instruction = self.fetch_next_instruction();
-            //println!("{:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{} instr: {:?}", pc, a, x, y, processor_status, sp, self.cycles_completed, next_instruction);
+            //println!("{:04X?} -> {:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}", next_instruction, pc, a, x, y, processor_status, sp, self.bus.ppu.dot, self.bus.ppu.scanline, self.cycles_completed);
             //println!("{:04X} -> {:X?}\tA:{:02X}\tX:{:02X}\tY:{:02X}\tP:{:02X}\tSP:{:02X}\tCYC:{}\tV:0x{:04X}", pc, next_instruction, a, x, y, processor_status, sp, self.cycles_completed, self.bus.ppu.ppuaddr);
             self.execute_instruction(next_instruction);
 
-            self.cycles_left += next_instruction.cycles;
+            self.cycles_left += u16::from(next_instruction.cycles);
 			// If instruction has an "oops" cost and the addressing mode used would incur an "oops"
 			// cost, update the cycles left here.
 			if next_instruction.page_cross_cost && self.read_crosses_page_boundry(next_instruction.mode) {
@@ -1788,7 +1789,7 @@ impl Cpu {
             let new_pc = (self.pc as i32 + offset as i32) as u16;
 
             // If branch is to new page, add 1 more cycle
-            if (new_pc / 0x100) != (self.pc / 0x100) {
+            if (new_pc >> 8) != (self.pc >> 8) {
                 self.cycles_left += 1;
             }
 
@@ -1848,7 +1849,6 @@ impl Cpu {
 
     fn brk(&mut self, mode: AddressingMode) {
         self.interrupt(Interrupt::Irq);
-        //self.pc += 1; //brk requires a padding byte
     }
 
     fn bvc(&mut self, mode: AddressingMode) {
@@ -2131,6 +2131,7 @@ impl Cpu {
         self.plp();
 
         self.pc = self.pop_word();
+		println!("rti at: ({}, {})", self.bus.ppu.dot, self.bus.ppu.scanline);
     }
 
     fn rts(&mut self) {

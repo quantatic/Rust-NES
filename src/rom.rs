@@ -60,21 +60,22 @@ impl Rom {
         let file_metadata = f.metadata()?;
         assert!(file_metadata.len() == u64::from(prg_bytes + chr_bytes + 0x10));
 
-        Ok(
-            Rom {
-                prg_rom,
-                chr_rom,
-                mapper_number: (rom_ctrl_byte_2 & 0b11110000) | ((rom_ctrl_byte_1 & 0b11110000) >> 4),
-                mirroring: if (rom_ctrl_byte_1 & (1 << 3)) != 0 {
-                    MirroringType::FourScreen
-                } else if (rom_ctrl_byte_1 & (1 << 0)) == 0 {
-                    MirroringType::Horizontal
-                } else {
-                    MirroringType::Vertical
-                },
-                battery_backed_ram: (rom_ctrl_byte_1 & (1 << 1)) != 0,
-                trainer: (rom_ctrl_byte_1 & (1 << 2)) != 0,
-            }
-        )
+		
+		let res = Rom {
+			prg_rom,
+			chr_rom,
+			mapper_number: (rom_ctrl_byte_2 & 0b11110000) | ((rom_ctrl_byte_1 & 0b11110000) >> 4),
+			mirroring: if (rom_ctrl_byte_1 & (1 << 3)) != 0 {
+				MirroringType::FourScreen
+			} else if (rom_ctrl_byte_1 & (1 << 0)) == 0 {
+				MirroringType::Horizontal
+			} else {
+				MirroringType::Vertical
+			},
+			battery_backed_ram: (rom_ctrl_byte_1 & (1 << 1)) != 0,
+			trainer: (rom_ctrl_byte_1 & (1 << 2)) != 0,
+		};
+		println!("{:?}", res.mirroring);
+        Ok(res)
     }
 }

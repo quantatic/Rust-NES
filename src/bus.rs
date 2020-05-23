@@ -10,6 +10,7 @@ pub struct Bus {
     pub rom: Rom,
     pub ppu: Ppu,
 	pub controller: Controller,
+	pub dma_in_progress: bool,
 }
 
 impl Bus {
@@ -18,7 +19,8 @@ impl Bus {
             ram: [0u8; 0x2000],
             rom,
             ppu,
-			controller
+			controller,
+			dma_in_progress: false,
         };
 
         for i in 0..res.rom.chr_rom.len() {
@@ -44,9 +46,7 @@ impl Bus {
                     0x2002 => {
                         let result = self.ppu.ppustatus;
                         self.ppu.ppustatus &= 0b01111111; // clear vblank when we read 0x2002
-                        self.ppu.ppuscroll = 0;
-                        self.ppu.ppuaddr = 0;
-                        self.ppu.two_write_partial = false;
+                        self.ppu.two_write_partial = false; // clear the partial write latch used for ppuscroll/ppuaddr
                         result
                     },
 					0x2003 => panic!("Not allowed to read from 0x2003"),
@@ -88,7 +88,6 @@ impl Bus {
 							// mirrored at a size of 0x1000, so since we already know we're gonna
 							// have to look at the mirorred nametable (we're working with palette
 							// now), just subtract 0x1000 and call it a day.
-
 							self.ppu.ppudata_buffer = self.ppu.get_vram_byte_at(self.ppu.ppuaddr - 0x1000);
 
 							data
@@ -107,6 +106,10 @@ impl Bus {
             },
             0x4000..=0x4017 => {
 				match addr {
+					0x4015 => {
+						//println!("Reading some sound shenanigans from 0x4015");
+						0
+					},
 					0x4016 => {
 						self.controller.read() as u8
 					},
@@ -145,9 +148,13 @@ impl Bus {
                 // 0x2000-0x2007 mirrored in 0x2000-0x4000
                 let actual_addr = ((addr - 0x2000) % 0x8) + 0x2000;
                 match actual_addr {
-                    0x2000 => self.ppu.ppuctrl = val,
+                    0x2000 => {
+						self.ppu.ppuctrl = val;
+						self.ppu.ppuscroll &= !0x0C00; // clear bits 11/12 of ppuscroll (t)
+						self.ppu.ppuscroll |= ((val as u16) << 10) & 0x0C00; // assign bottom 2 bits = base nametable addr to t
+					},
                     0x2001 => self.ppu.ppumask = val,
-                    0x2002 => panic!("Not allowed to write to 0x{:04x}", addr),
+                    0x2002 => {}//,
                     0x2003 => self.ppu.oamaddr = val,
                     0x2004 => {
 						self.ppu.set_oam_byte_at(self.ppu.oamaddr, val);
@@ -155,22 +162,36 @@ impl Bus {
 						self.ppu.oamaddr = self.ppu.oamaddr.wrapping_add(1);
 					},
                     0x2005 => {
-                        match self.ppu.two_write_partial {
-                            false => self.ppu.ppuscroll = ((val as u16) << 8),
-                            true => self.ppu.ppuscroll |= (val as u16),
-                        };
+						//println!("Writing to 0x2005 at ({}, {})", self.ppu.dot, self.ppu.scanline);
+						if !self.ppu.two_write_partial {
+							self.ppu.ppuscroll &= !0x1F; // clear bits 1-5 of ppuscroll
+							self.ppu.ppuscroll |= (val as u16) >> 3; // assign top 5 bits of val to ppuscroll coarse x scroll (1-5)
+							//self.ppu.fine_x = val & 0x7; // assign bottom 3 bits of val to fine_x
+							println!("Assigned {} to fine_x at ({}, {})", self.ppu.fine_x, self.ppu.dot, self.ppu.scanline);
+						} else {
+							self.ppu.ppuscroll &= !0x73E0; // clear bits 6-10, 13-15 of ppuscroll
+							self.ppu.ppuscroll |= ((val as u16) & 0x7) << 12; // move bottom 3 bits of val to ppuscroll fine y scroll (13-15)
+							self.ppu.ppuscroll |= ((val as u16) & 0xF8) << 2; // move bits 4-8 of val to ppuscroll coarse y scroll (6-10)
+						};
                         self.ppu.two_write_partial = !self.ppu.two_write_partial;
                     },
                     0x2006 => {
-                        match self.ppu.two_write_partial {
-                            false => self.ppu.ppuaddr = ((val as u16) << 8),
-                            true => self.ppu.ppuaddr |= (val as u16),
-                        };
+						//println!("Writing to 0x2006 at ({}, {})", self.ppu.dot, self.ppu.scanline);
+						if !self.ppu.two_write_partial {
+							self.ppu.ppuscroll &= !0x3F00; // clear bits 8-13 of ppuscroll
+							self.ppu.ppuscroll |= ((val as u16) & 0x3F) << 8; //assign bits 1-6 of val to bits 9-14 of ppuscroll
+							self.ppu.ppuscroll &= !0x4000; //clear bit 15 of ppuscroll
+						} else {
+							self.ppu.ppuscroll &= !0xFF; // clear bits 1-8 of ppuscroll
+							self.ppu.ppuscroll |= (val as u16) & 0xFF; // assign bits 1-8 of val to bits 1-8 of ppuscroll
+							self.ppu.ppuaddr = self.ppu.ppuscroll; // on write two of $2006, assign ppuscroll to ppuaddr (t to v)
+						};
                         self.ppu.two_write_partial = !self.ppu.two_write_partial;
                     },
                     0x2007 => {
                         assert!(!self.ppu.two_write_partial);
                         self.ppu.set_vram_byte_at(self.ppu.ppuaddr, val);
+						//println!("Writing {} to 0x{:04X} at ({}, {})", val, self.ppu.ppuaddr, self.ppu.dot, self.ppu.scanline);
                         // Check bit 2 of ctrl1 to see how much to increment ppuaddr by
                         self.ppu.ppuaddr += if (self.ppu.ppuctrl & (1 << 2)) == 0 {
                             0x1
@@ -190,6 +211,7 @@ impl Bus {
                             let data = self.get_byte_at(start_addr + u16::from(i));
                             self.ppu.set_oam_byte_at(self.ppu.oamaddr.wrapping_add(i), data);
                         }
+						self.dma_in_progress = true;
                     },
 					0x4016 => {
 						self.controller.set_strobe(val & 0x1 != 0);
@@ -204,7 +226,7 @@ impl Bus {
                 }
                 self.rom.prg_rom[usize::from(rom_access_addr)] = val;
             },
-			addr => println!("Ignoring write of {} to 0x{:05x} for now", char::from(val), addr),
+			addr => print!("{}", char::from(val)),
         }
     }
 

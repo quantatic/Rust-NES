@@ -1,4 +1,3 @@
-use sdl2::event::Event;
 use sdl2::rect::Rect;
 use sdl2::pixels::Color;
 use sdl2::render::Canvas;
@@ -80,15 +79,17 @@ pub struct Ppu {
     pub oamaddr: u8,
     pub oamdata: u8,
 	pub ppudata_buffer: u8,
-    pub ppuscroll: u16,
-    pub ppuaddr: u16,
+    pub ppuscroll: u16, // also called t, or temporary vram address, in docs.
+    pub ppuaddr: u16, // also called v, or current vram address, in docs
+	pub fine_x: u8, // fine x scroll of the ppu
     pub two_write_partial: bool,
     pub vram: [u8; 0x4000],
     pub oam: [u8; 0x100],
     pub canvas: Canvas<Window>,
     pub scanline: u16,
-    pub cycle: u16,
+    pub dot: u16,
     pub nmi_waiting: bool,
+	pub even_frame: bool,
 	pub tmp: u32
 }
 
@@ -114,13 +115,15 @@ impl Ppu {
 			ppudata_buffer: 0x0,
             ppuscroll: 0x0,
             ppuaddr: 0x0,
+			fine_x: 0x0,
             two_write_partial: false,
             vram: [0; 0x4000],
             oam: [0; 0x100],
             canvas,
             scanline: 0x0,
-            cycle: 0x0,
+            dot: 0x0,
             nmi_waiting: false,
+			even_frame: false,
 			tmp: 0
         }
     }
@@ -135,7 +138,7 @@ impl Ppu {
 
 		// Assume we're doing full nametable mirroring (for now)
         if actual_addr >= 0x2000 && actual_addr < 0x3000 {
-			actual_addr = ((actual_addr - 0x2000) % 0x400) + 0x2000;
+			actual_addr = ((actual_addr - 0x2000) % 0x800) + 0x2000;
         }
 
 		// Data at addresses 0x3000-0x3EFF mirrors 0x2000-0x2EFF
@@ -161,15 +164,13 @@ impl Ppu {
 
 		// Assume we're doing full nametable mirroring (for now)
         if actual_addr >= 0x2000 && actual_addr < 0x3000 {
-			actual_addr = ((actual_addr - 0x2000) % 0x400) + 0x2000;
+			actual_addr = ((actual_addr - 0x2000) % 0x800) + 0x2000;
         }
 
 		// Mirror 0x3F0{0,4,8,C} at 0x3F1{0,4,8,C}
-		if actual_addr >= 0x3F00 && actual_addr % 0x4 == 0 {
-			let old_addr = actual_addr;
+		if actual_addr >= 0x3F00 && actual_addr < 0x4000 && actual_addr % 0x4 == 0 {
 			actual_addr = ((actual_addr - 0x3F00) % 0x10) + 0x3F00;
 		}
-
 
         self.vram[usize::from(actual_addr)] = val;
     }
@@ -182,19 +183,19 @@ impl Ppu {
         self.oam[usize::from(addr)] = val;
     }
 
-    fn get_pixel_at(&mut self, x: u16, y: u16) -> Color {
-        let tile_x = x / 8;
-        let tile_y = y / 8;
-        let nametable_idx = u16::from(tile_x) + (u16::from(tile_y) * 32);
-        let nametable_base = match self.ppuctrl & 0b00000011 {
-            0x0 => 0x2000,
-            0x1 => 0x2400,
-            0x2 => 0x2800,
-            0x3 => 0x2C00,
-            _ => panic!(),
-        };
+    fn get_current_pixel(&mut self, scanline: u16, dot: u16) -> Color {
+	/*
+	  self.ppuaddr looks like the following during this method call
 
-        let pattern_idx = self.get_vram_byte_at(nametable_base + u16::from(nametable_idx));
+	  yyy NN YYYYY XXXXX
+		||| || ||||| +++++-- coarse X scroll
+		||| || +++++-------- coarse Y scroll
+		||| ++-------------- nametable select
+		+++----------------- fine Y scroll
+	*/
+		let tile_addr = 0x2000 | (self.ppuaddr & 0xFFF); //coarse x scroll, coarse y scroll, and nametable select are all we need for address of tile
+
+        let pattern_idx = self.get_vram_byte_at(tile_addr);
 
 		let sprite_pattern_table_base = if self.ppuctrl & (1 << 3) == 0 {
 			0x0000
@@ -212,41 +213,47 @@ impl Ppu {
 
 		let grayscale = self.ppumask & (1 << 0) != 0;
 		if grayscale {
-			panic!("don't know how to handle grayscale!");
+			//panic!("don't know how to handle grayscale!");
 		}
 
 		if sprite_size != 0 {
 			panic!("uh oh! don't know how to handle sprite size: {}", sprite_size);
 		}
 
-        let pattern_0 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(y % 8));
-        let pattern_1 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(y % 8) + 8);
+		let fine_y = (self.ppuaddr & 0x7000) >> 12; // extract fine y value for current pixel
+        let pattern_0 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + fine_y);
+        let pattern_1 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + fine_y + 8);
 
         // bit offset into pattern_0 and pattern_1 are overlaid
 
-        let pattern_low = ((pattern_0 >> (7 - (x % 8))) & 0x1) |
-            (((pattern_1 >> (7 - (x % 8))) & 0x1) << 1);
+        let pattern_low = ((pattern_0 >> (7 - self.fine_x)) & 0x1) | (((pattern_1 >> (7 - self.fine_x)) & 0x1) << 1);
 
-        let attribute_x = x / 32;
-        let attribute_y = y / 32;
-        let attribute_idx = u16::from(attribute_x + (attribute_y * 8));
-        let attribute_data = self.get_vram_byte_at(0x23C0 + attribute_idx);
+		let attribute_addr = 0x23C0 | (self.ppuaddr & 0x0C00) | ((self.ppuaddr >> 4) & 0x38) | ((self.ppuaddr >> 2) & 0x07); // mangle portions of ppuaddr to form the attribute address
+		//println!("attribute addr: 0x{:04x}", attribute_addr);
+        let attribute_data = self.get_vram_byte_at(attribute_addr);
+
         // -------
         // |00|10|
         // -------
         // |01|11|
         // -------
-        let pattern_high = match ((tile_x % 4) / 2, (tile_y % 4) / 2) {
-            (0, 0) => (attribute_data >> 0) & 0b00000011,
-            (1, 0) => (attribute_data >> 2) & 0b00000011,
-            (0, 1) => (attribute_data >> 4) & 0b00000011,
-            (1, 1) => (attribute_data >> 6) & 0b00000011,
+		let tile_attribute_coord_x = (self.ppuaddr & 0x2) >> 1;
+		let tile_attribute_coord_y = (self.ppuaddr & 0x40) >> 6;
+        let pattern_high = match (tile_attribute_coord_x, tile_attribute_coord_y) {
+            (0, 0) => (attribute_data >> 0) & 0x3,
+            (1, 0) => (attribute_data >> 2) & 0x3,
+            (0, 1) => (attribute_data >> 4) & 0x3,
+            (1, 1) => (attribute_data >> 6) & 0x3,
             _ => panic!(),
         };
 
+		if self.scanline < 30 {
+			//println!("0x{:04X} at ({}, {}) -> {}", self.ppuaddr, self.dot, self.scanline, pattern_idx);
+		}
+
 		// If background rendering enabled, get the background pattern offset here. Otherwise,
 		// the offset will always be 0 (for the default background).
-        let background_pattern_final = if self.ppumask & (1 << 3) != 0 {
+        let background_pattern_final = if self.ppumask & (1 << 3) != 0 && pattern_low != 0 {
 			pattern_low | (pattern_high << 2)
 		} else {
 			0
@@ -260,29 +267,30 @@ impl Ppu {
             let attributes = self.oam[sprite_idx * 4 + 2];
             let sprite_x = self.oam[sprite_idx * 4 + 3] as u16;
 
-            if x >= sprite_x && x < (sprite_x + 8) && y >= sprite_y && y < (sprite_y + 8) {
+            if dot >= sprite_x && dot < (sprite_x + 8) && scanline >= sprite_y && scanline < (sprite_y + 8) {
+
 				let sprite_height_offset = if attributes & (1 << 7) == 0 {
-					y - sprite_y
+					scanline - sprite_y
 				} else {
-					7 - (y - sprite_y)
+					7 - (scanline - sprite_y)
 				};
 
-                let pattern_0 = self.get_vram_byte_at((u16::from(pattern_idx) * 16) + u16::from(sprite_height_offset));
-                let pattern_1 = self.get_vram_byte_at((u16::from(pattern_idx) * 16) + u16::from(sprite_height_offset) + 8);
+                let pattern_0 = self.get_vram_byte_at(sprite_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(sprite_height_offset));
+                let pattern_1 = self.get_vram_byte_at(sprite_pattern_table_base + (u16::from(pattern_idx) * 16) + u16::from(sprite_height_offset) + 8);
 
 				// We use this to calculate the offset into this "strip" of sprite data (the sprite
 				// pos along the x-axis). By default, this is simply actual x - sprite start x.
 				// In the case where the sprite is horizontally flipped (bit 7 of attributes is
 				// active), we need to flip this value.
 				let sprite_strip_offset = if attributes & (1 << 6) == 0 {
-					7 - (x - sprite_x)
+					7 - (dot - sprite_x)
 				} else {
-					x - sprite_x
+					dot - sprite_x
 				};
 
                 // bit offset into pattern_0 and pattern_1 are overlaid
-                let pattern_low = ((pattern_0 & (1 << sprite_strip_offset)) >> sprite_strip_offset) |
-                                   (((pattern_1 & (1 << sprite_strip_offset)) >> sprite_strip_offset) << 1);
+                let pattern_low = ((pattern_0 >> sprite_strip_offset) & 0x1) |
+									(((pattern_1 >> sprite_strip_offset) & 0x1) << 1);
 
                 let pattern_high = attributes & 0b00000011;
                 let pattern_final = pattern_low | (pattern_high << 2);
@@ -291,6 +299,11 @@ impl Ppu {
 				// pattern), the sprite at this point is transparent.
 				if pattern_low == 0 {
 					continue;
+				}
+
+				if sprite_idx == 0 && pattern_low != 0 && background_pattern_final != 0 {
+					self.ppustatus |= (1 << 6);
+					println!("Set sprite 0 hit at: ({}, {})", self.dot, self.scanline);
 				}
 
                 let palette_idx = self.get_vram_byte_at(0x3F10 + u16::from(pattern_final));
@@ -302,50 +315,128 @@ impl Ppu {
         PALETTE[usize::from(background_palette_idx)]
     }
 
-    pub fn step(&mut self) {
-
-		// Cycle is equal to dot + 1. 
-
-		// If we're at the part of the screen to be rendered: render!
+    pub fn step(&mut self) -> bool {
+		// If we're at the part of the screen to be rendering:
 		if self.scanline < 240 {
-			if self.cycle > 0 && self.cycle <= 256 {
-				/* Psuedo-draw */
-				let dot = self.cycle - 1;
+			if self.dot >= 0 && self.dot < 256 {
 
-				let curr_pixel_color = self.get_pixel_at(dot, self.scanline);
+				if self.dot == 0 && self.scanline == 1 {
+					//println!("ppuaddr at ({}, {}): 0x{:04X}", self.dot, self.scanline, self.ppuaddr);
+				}
+
+				/* Psuedo-draw */
+
+				let curr_pixel_color = self.get_current_pixel(self.scanline, self.dot);
+
 				self.canvas.set_draw_color(curr_pixel_color);
-				self.canvas.fill_rect(Rect::new(dot as i32 * SCALE as i32, self.scanline as i32 * SCALE as i32, SCALE, SCALE)).unwrap();
+				self.canvas.fill_rect(Rect::new(self.dot as i32 * SCALE as i32,
+													self.scanline as i32 * SCALE as i32, SCALE, SCALE)).unwrap();
 			}
 		}
 
-		if self.cycle == 1 {
+		// If rendering is enabled:
+		if self.ppumask & 0x18 != 0 {
+			// We only make memory accesses to PPU when rendering is active and on scanline 0-239
+			// or 261 (pre-render scanline)
+			if self.scanline < 240 || self.scanline == 261 {
+				if self.dot >= 0 && self.dot < 256 { 
+					self.fine_x_increment();
+				}
+			}
+
+			if self.scanline < 240 {
+				if self.dot == 256 {
+					self.fine_y_increment();
+				}
+			}
+
+			if self.dot == 257 {
+				self.ppuaddr &= !0x041F; // assign all bits related to horizontal position from ppuscroll to ppuaddr
+				self.ppuaddr |= self.ppuscroll & 0x041F;
+			}
+
+			if self.scanline == 261 {
+				if self.dot >= 280 && self.dot <= 304 { // Reload vertical scroll bits
+					self.ppuaddr &= !0x7BE0;
+					self.ppuaddr |= self.ppuscroll & 0x7BE0;
+				}
+
+				if self.dot == 339 && !self.even_frame { // On odd frames, we skip right from (339, 261) to (0, 0)
+					self.dot += 1;
+				}
+			}
+		}
+
+
+		if self.dot == 1 {
 			if self.scanline == 241 {
 				self.ppustatus |= (1 << 7); // set vblank at dot 1 of scanline 241
-				self.nmi_waiting = (self.ppuctrl & (1 << 7)) != 0; //Nmi only occurs on vblank if ppuctrl bit 7 is set
+				self.nmi_waiting = (self.ppuctrl >> 7) & 0x1 != 0; //Nmi only occurs on vblank if ppuctrl bit 7 is set
 			} else if self.scanline == 261 {
+				self.ppustatus &= !(1 << 6); // clear sprite 0 hit at dot 1 of scaline 261 (pre-render line)
 				self.ppustatus &= !(1 << 7); // clear vblank at dot 1 of scanline 261 (pre-render line)
 			}
 		}
 
-		//self.tmp += 1;
-		self.cycle += 1;
+		// OAMADDR gets set to 0 during ticks 257-320 of pre-render and visible scanlines
+		if (self.scanline == 261 || self.scanline < 240) && (self.dot >= 257 && self.dot <= 320) {
+			self.oamaddr = 0;
+		}
 
-		if self.cycle > 340 {
-			self.cycle = 0;
+
+		// Handle actually incrementing cycles and scanlines
+		self.dot += 1;
+
+		if self.dot > 340 {
+			self.dot = 0;
 			self.scanline += 1;
-
 			if self.scanline > 261 {
 				self.scanline = 0;
+				self.even_frame = !self.even_frame;
 				self.canvas.present();
+				return true;
 				//println!("Last PPU frame was {} ticks!", self.tmp);
 				//self.tmp = 0;
 			}
 		}
 
-		// OAMADDR gets set to 0 during ticks 257-320 of pre-render and visible scanlines
-		if (self.scanline == 261 || self.scanline <= 239) && (self.cycle >= 257 && self.cycle <= 320) {
-			self.oamaddr = 0;
-		}
-
+		false
     }
+
+	fn fine_x_increment(&mut self) {
+		if self.fine_x < 7 {
+			self.fine_x += 1;
+		} else {
+			self.fine_x = 0;
+
+			let mut coarse_x = self.ppuaddr & 0x1F; // extract coarse x
+			if coarse_x == 31 {
+				coarse_x = 0;
+				self.ppuaddr ^= 0x400; // swap nametable between possible x locations (either left or right)
+			} else {
+				coarse_x += 1;
+			}
+
+			self.ppuaddr = (self.ppuaddr & !0x1F) | coarse_x; // put coarse_x back into ppuaddr
+		}
+	}
+
+	pub fn fine_y_increment(&mut self) {
+		if self.ppuaddr & 0x7000 != 0x7000 { // if fine y < 7
+			self.ppuaddr += 0x1000; // bump fine y by adding 0x1000 to ppuaddr (we can safely do this, because fine y < 7)
+		} else {
+			self.ppuaddr &= !0x7000; // reset fine y to 0
+			let mut coarse_y = (self.ppuaddr & 0x3E0) >> 5; // extract coarse y value from ppuaddr (bits 6-10)
+			if coarse_y == 29 {
+				coarse_y = 0; // reset coarse y to 0
+				self.ppuaddr ^= 0x800; // swap nametable value between possible y locations (either top or bottom)
+			} else if coarse_y == 31 {
+				coarse_y = 0; // assign coarse_y to 0 still, but don't switch nametable. We get here when only coarse_y gets manually set.
+			} else {
+				coarse_y += 1; // otherwise, just increment coarse y
+			}
+
+			self.ppuaddr = (self.ppuaddr & !0x3E0) | (coarse_y << 5); // put coarse_y back into ppuaddr
+		}
+	}
 }
