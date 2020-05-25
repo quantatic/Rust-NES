@@ -166,8 +166,7 @@ impl Bus {
 						if !self.ppu.two_write_partial {
 							self.ppu.ppuscroll &= !0x1F; // clear bits 1-5 of ppuscroll
 							self.ppu.ppuscroll |= (val as u16) >> 3; // assign top 5 bits of val to ppuscroll coarse x scroll (1-5)
-							//self.ppu.fine_x = val & 0x7; // assign bottom 3 bits of val to fine_x
-							println!("Assigned {} to fine_x at ({}, {})", self.ppu.fine_x, self.ppu.dot, self.ppu.scanline);
+							self.ppu.fine_x = val & 0x7; // assign bottom 3 bits of val to fine_x
 						} else {
 							self.ppu.ppuscroll &= !0x73E0; // clear bits 6-10, 13-15 of ppuscroll
 							self.ppu.ppuscroll |= ((val as u16) & 0x7) << 12; // move bottom 3 bits of val to ppuscroll fine y scroll (13-15)

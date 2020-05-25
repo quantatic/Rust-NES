@@ -3,7 +3,10 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
-const SCALE: u32 = 2;
+use std::convert::TryFrom;
+
+const SCALE: u32 = 4;
+
 
 pub const PALETTE: [Color; 0x40] = [
     Color { r: 0x75, g: 0x75, b: 0x75, a: 0xFF }, //0x00
@@ -90,7 +93,12 @@ pub struct Ppu {
     pub dot: u16,
     pub nmi_waiting: bool,
 	pub even_frame: bool,
-	pub tmp: u32
+	pub pattern_table_shift_low: u16,    // the low byte of this will actually be the "high byte" -> the byte that gets assigned directly
+	pub pattern_table_shift_high: u16,   // as such, we will read from the high byte (bit 15 is the "first bit"), and left shift out to update
+	pub attribute_table_palette_shift_low: u8,
+	pub attribute_table_palette_latch_low: bool,
+	pub attribute_table_palette_shift_high: u8,
+	pub attribute_table_palette_latch_high: bool,
 }
 
 impl Ppu {
@@ -124,7 +132,12 @@ impl Ppu {
             dot: 0x0,
             nmi_waiting: false,
 			even_frame: false,
-			tmp: 0
+			pattern_table_shift_low: 0,
+			pattern_table_shift_high: 0,
+			attribute_table_palette_shift_low: 0,
+			attribute_table_palette_latch_low: false,
+			attribute_table_palette_shift_high: 0,
+			attribute_table_palette_latch_high: false,
         }
     }
 
@@ -184,18 +197,23 @@ impl Ppu {
     }
 
     fn get_current_pixel(&mut self, scanline: u16, dot: u16) -> Color {
-	/*
-	  self.ppuaddr looks like the following during this method call
+		let x_offset = 15 - self.fine_x;
 
-	  yyy NN YYYYY XXXXX
-		||| || ||||| +++++-- coarse X scroll
-		||| || +++++-------- coarse Y scroll
-		||| ++-------------- nametable select
-		+++----------------- fine Y scroll
-	*/
-		let tile_addr = 0x2000 | (self.ppuaddr & 0xFFF); //coarse x scroll, coarse y scroll, and nametable select are all we need for address of tile
+		// Bits from left->right (bit_1 bit_2 bit_3 bit_4)
+		let bit_1 = (self.attribute_table_palette_shift_high >> self.fine_x) & 0x1;
+		let bit_2 = (self.attribute_table_palette_shift_low >> self.fine_x) & 0x1;
+		let bit_3 = u8::try_from((self.pattern_table_shift_high >> x_offset) & 0x1).unwrap();
+		let bit_4 = u8::try_from((self.pattern_table_shift_low >> x_offset) & 0x1).unwrap();
 
-        let pattern_idx = self.get_vram_byte_at(tile_addr);
+		// If background rendering enabled, get the background pattern offset here. Otherwise,
+		// the offset will always be 0 (for the default background).
+        let background_pattern_final = if self.ppumask & (1 << 3) != 0 && !(bit_3 == 0 && bit_4 == 0) {
+			(bit_1 << 3) | (bit_2 << 2) | (bit_3 << 1) | bit_4
+		} else {
+			0
+		};
+
+        let background_palette_idx = self.get_vram_byte_at(0x3F00 + u16::from(background_pattern_final));
 
 		let sprite_pattern_table_base = if self.ppuctrl & (1 << 3) == 0 {
 			0x0000
@@ -203,63 +221,6 @@ impl Ppu {
 			0x1000
 		};
 
-		let background_pattern_table_base = if self.ppuctrl & (1 << 4) == 0 {
-			0x0000
-		} else {
-			0x1000
-		};
-
-		let sprite_size = self.ppuctrl & (1 << 5);
-
-		let grayscale = self.ppumask & (1 << 0) != 0;
-		if grayscale {
-			//panic!("don't know how to handle grayscale!");
-		}
-
-		if sprite_size != 0 {
-			panic!("uh oh! don't know how to handle sprite size: {}", sprite_size);
-		}
-
-		let fine_y = (self.ppuaddr & 0x7000) >> 12; // extract fine y value for current pixel
-        let pattern_0 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + fine_y);
-        let pattern_1 = self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + fine_y + 8);
-
-        // bit offset into pattern_0 and pattern_1 are overlaid
-
-        let pattern_low = ((pattern_0 >> (7 - self.fine_x)) & 0x1) | (((pattern_1 >> (7 - self.fine_x)) & 0x1) << 1);
-
-		let attribute_addr = 0x23C0 | (self.ppuaddr & 0x0C00) | ((self.ppuaddr >> 4) & 0x38) | ((self.ppuaddr >> 2) & 0x07); // mangle portions of ppuaddr to form the attribute address
-		//println!("attribute addr: 0x{:04x}", attribute_addr);
-        let attribute_data = self.get_vram_byte_at(attribute_addr);
-
-        // -------
-        // |00|10|
-        // -------
-        // |01|11|
-        // -------
-		let tile_attribute_coord_x = (self.ppuaddr & 0x2) >> 1;
-		let tile_attribute_coord_y = (self.ppuaddr & 0x40) >> 6;
-        let pattern_high = match (tile_attribute_coord_x, tile_attribute_coord_y) {
-            (0, 0) => (attribute_data >> 0) & 0x3,
-            (1, 0) => (attribute_data >> 2) & 0x3,
-            (0, 1) => (attribute_data >> 4) & 0x3,
-            (1, 1) => (attribute_data >> 6) & 0x3,
-            _ => panic!(),
-        };
-
-		if self.scanline < 30 {
-			//println!("0x{:04X} at ({}, {}) -> {}", self.ppuaddr, self.dot, self.scanline, pattern_idx);
-		}
-
-		// If background rendering enabled, get the background pattern offset here. Otherwise,
-		// the offset will always be 0 (for the default background).
-        let background_pattern_final = if self.ppumask & (1 << 3) != 0 && pattern_low != 0 {
-			pattern_low | (pattern_high << 2)
-		} else {
-			0
-		};
-
-        let background_palette_idx = self.get_vram_byte_at(0x3F00 + u16::from(background_pattern_final));
 
         for sprite_idx in 0..64usize {
             let sprite_y = self.oam[sprite_idx * 4] as u16;
@@ -303,7 +264,6 @@ impl Ppu {
 
 				if sprite_idx == 0 && pattern_low != 0 && background_pattern_final != 0 {
 					self.ppustatus |= (1 << 6);
-					println!("Set sprite 0 hit at: ({}, {})", self.dot, self.scanline);
 				}
 
                 let palette_idx = self.get_vram_byte_at(0x3F10 + u16::from(pattern_final));
@@ -320,10 +280,6 @@ impl Ppu {
 		if self.scanline < 240 {
 			if self.dot >= 0 && self.dot < 256 {
 
-				if self.dot == 0 && self.scanline == 1 {
-					//println!("ppuaddr at ({}, {}): 0x{:04X}", self.dot, self.scanline, self.ppuaddr);
-				}
-
 				/* Psuedo-draw */
 
 				let curr_pixel_color = self.get_current_pixel(self.scanline, self.dot);
@@ -339,8 +295,26 @@ impl Ppu {
 			// We only make memory accesses to PPU when rendering is active and on scanline 0-239
 			// or 261 (pre-render scanline)
 			if self.scanline < 240 || self.scanline == 261 {
-				if self.dot >= 0 && self.dot < 256 { 
-					self.fine_x_increment();
+				if (self.dot > 0 && self.dot <= 256) || (self.dot > 320 && self.dot <= 336)  {
+					self.pattern_table_shift_low <<= 1;
+					self.pattern_table_shift_high <<= 1;
+
+					// If latch is set, make sure we set the bit that would be shifted in
+					self.attribute_table_palette_shift_low >>= 1;
+					if self.attribute_table_palette_latch_low {
+						self.attribute_table_palette_shift_low |= 0x80;
+					}
+
+					self.attribute_table_palette_shift_high >>= 1;
+					if self.attribute_table_palette_latch_high {
+						self.attribute_table_palette_shift_high |= 0x80;
+					}
+					//println!("0b{:08b}", self.attribute_table_palette_shift_low);
+
+					if self.dot % 8 == 0 { 
+						self.reload_shift_registers();
+						self.coarse_x_increment();
+					}
 				}
 			}
 
@@ -383,7 +357,6 @@ impl Ppu {
 			self.oamaddr = 0;
 		}
 
-
 		// Handle actually incrementing cycles and scanlines
 		self.dot += 1;
 
@@ -395,30 +368,77 @@ impl Ppu {
 				self.even_frame = !self.even_frame;
 				self.canvas.present();
 				return true;
-				//println!("Last PPU frame was {} ticks!", self.tmp);
-				//self.tmp = 0;
 			}
 		}
 
 		false
     }
 
-	fn fine_x_increment(&mut self) {
-		if self.fine_x < 7 {
-			self.fine_x += 1;
+	fn reload_shift_registers(&mut self) {
+		/*
+		  self.ppuaddr looks like the following during this method call
+
+		  yyy NN YYYYY XXXXX
+			||| || ||||| +++++-- coarse X scroll
+			||| || +++++-------- coarse Y scroll
+			||| ++-------------- nametable select
+			+++----------------- fine Y scroll
+		*/
+
+		let background_pattern_table_base = if self.ppuctrl & (1 << 4) == 0 {
+			0x0000
 		} else {
-			self.fine_x = 0;
+			0x1000
+		};
 
-			let mut coarse_x = self.ppuaddr & 0x1F; // extract coarse x
-			if coarse_x == 31 {
-				coarse_x = 0;
-				self.ppuaddr ^= 0x400; // swap nametable between possible x locations (either left or right)
-			} else {
-				coarse_x += 1;
-			}
+		let tile_addr = 0x2000 | (self.ppuaddr & 0xFFF); //coarse x scroll, coarse y scroll, and nametable select are all we need for address of tile
 
-			self.ppuaddr = (self.ppuaddr & !0x1F) | coarse_x; // put coarse_x back into ppuaddr
+        let pattern_idx = self.get_vram_byte_at(tile_addr);
+
+		let fine_y = (self.ppuaddr & 0x7000) >> 12; // extract fine y value for current pixel
+
+		// Clear the high 8 bits of the shift registers
+		self.pattern_table_shift_low &= 0xFF00;
+		self.pattern_table_shift_high &= 0xFF00;
+
+		// Set the low and high shift registers from the corresponding strips of pixels
+		self.pattern_table_shift_low |= u16::from(self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + fine_y));
+		self.pattern_table_shift_high |= u16::from(self.get_vram_byte_at(background_pattern_table_base + (u16::from(pattern_idx) * 16) + fine_y + 8));
+
+		let attribute_addr = 0x23C0 | (self.ppuaddr & 0x0C00) | ((self.ppuaddr >> 4) & 0x38) | ((self.ppuaddr >> 2) & 0x07); // mangle portions of ppuaddr to form the attribute address
+        let attribute_data = self.get_vram_byte_at(attribute_addr);
+
+        // -------
+        // |00|10|
+        // -------
+        // |01|11|
+        // -------
+		let tile_attribute_coord_x = (self.ppuaddr & 0x2) >> 1;
+		let tile_attribute_coord_y = (self.ppuaddr & 0x40) >> 6;
+        let pattern_high = match (tile_attribute_coord_x, tile_attribute_coord_y) {
+            (0, 0) => (attribute_data >> 0) & 0x3,
+            (1, 0) => (attribute_data >> 2) & 0x3,
+            (0, 1) => (attribute_data >> 4) & 0x3,
+            (1, 1) => (attribute_data >> 6) & 0x3,
+            _ => panic!(),
+        };
+
+		// Set the low and high shift registers from the corresponding data (single bit latch ->
+		// 8-bit shift register).
+		self.attribute_table_palette_latch_low = pattern_high & 0x1 != 0;
+		self.attribute_table_palette_latch_high = pattern_high & 0x2 != 0;
+	}
+
+	fn coarse_x_increment(&mut self) {
+		let mut coarse_x = self.ppuaddr & 0x1F; // extract coarse x
+		if coarse_x == 31 {
+			coarse_x = 0;
+			self.ppuaddr ^= 0x400; // swap nametable between possible x locations (either left or right)
+		} else {
+			coarse_x += 1;
 		}
+
+		self.ppuaddr = (self.ppuaddr & !0x1F) | coarse_x; // put coarse_x back into ppuaddr
 	}
 
 	pub fn fine_y_increment(&mut self) {

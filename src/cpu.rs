@@ -88,8 +88,10 @@ impl Cpu {
         let x = self.x;
         let y = self.y;
         let sp = self.sp;
-        if self.bus.ppu.nmi_waiting {
-			println!("nmi at ({}, {})", self.bus.ppu.dot, self.bus.ppu.scanline);
+		if self.bus.dma_in_progress {
+			self.bus.dma_in_progress = false;
+			self.cycles_left = 100;
+		} else if self.bus.ppu.nmi_waiting {
             self.bus.ppu.nmi_waiting = false;
             self.interrupt(Interrupt::Nmi);
 		} else {
@@ -2131,7 +2133,6 @@ impl Cpu {
         self.plp();
 
         self.pc = self.pop_word();
-		println!("rti at: ({}, {})", self.bus.ppu.dot, self.bus.ppu.scanline);
     }
 
     fn rts(&mut self) {
