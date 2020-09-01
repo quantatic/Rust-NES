@@ -12,7 +12,7 @@ pub struct Rom {
     pub trainer: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum MirroringType {
     Horizontal,
     Vertical,
@@ -36,10 +36,13 @@ impl Rom {
         let chr_rom_banks = header[5];
         let rom_ctrl_byte_1 = header[6];
         let rom_ctrl_byte_2 = header[7];
-        let prg_ram_banks = std::cmp::max(header[8], 1); //assume 1 bank exists even when 0
+        let _prg_ram_banks = std::cmp::max(header[8], 1); //assume 1 bank exists even when 0
 
         if header[9..16] != [0; 7] {
-            return Err(Error::new(ErrorKind::InvalidData, "Bytes 9-15 of header are not all 0"));
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Bytes 9-15 of header are not all 0",
+            ));
         }
 
         if (rom_ctrl_byte_2 & (0b00001111)) != 0 {
@@ -60,22 +63,21 @@ impl Rom {
         let file_metadata = f.metadata()?;
         assert!(file_metadata.len() == u64::from(prg_bytes + chr_bytes + 0x10));
 
-		
-		let res = Rom {
-			prg_rom,
-			chr_rom,
-			mapper_number: (rom_ctrl_byte_2 & 0b11110000) | ((rom_ctrl_byte_1 & 0b11110000) >> 4),
-			mirroring: if (rom_ctrl_byte_1 & (1 << 3)) != 0 {
-				MirroringType::FourScreen
-			} else if (rom_ctrl_byte_1 & (1 << 0)) == 0 {
-				MirroringType::Horizontal
-			} else {
-				MirroringType::Vertical
-			},
-			battery_backed_ram: (rom_ctrl_byte_1 & (1 << 1)) != 0,
-			trainer: (rom_ctrl_byte_1 & (1 << 2)) != 0,
-		};
-		println!("{:?}", res.mirroring);
+        let res = Rom {
+            prg_rom,
+            chr_rom,
+            mapper_number: (rom_ctrl_byte_2 & 0b11110000) | ((rom_ctrl_byte_1 & 0b11110000) >> 4),
+            mirroring: if (rom_ctrl_byte_1 & (1 << 3)) != 0 {
+                MirroringType::FourScreen
+            } else if (rom_ctrl_byte_1 & (1 << 0)) == 0 {
+                MirroringType::Horizontal
+            } else {
+                MirroringType::Vertical
+            },
+            battery_backed_ram: (rom_ctrl_byte_1 & (1 << 1)) != 0,
+            trainer: (rom_ctrl_byte_1 & (1 << 2)) != 0,
+        };
+        println!("{:?}", res.mirroring);
         Ok(res)
     }
 }
