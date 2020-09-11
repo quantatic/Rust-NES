@@ -554,11 +554,7 @@ impl Ppu {
         let background_palette_idx =
             self.get_vram_byte_at(0x3F00 + u16::from(background_pattern_final));
 
-        let sprite_pattern_table_base = if self.ppuctrl & (1 << 3) == 0 {
-            0x0000
-        } else {
-            0x1000
-        };
+        let square_sprites = (self.ppuctrl & 0x20) >> 5 == 0;
 
         for sprite_idx in 0..64usize {
             let sprite_y = self.oam[sprite_idx * 4] as u16 + 1; // "Sprite data is delayed by one scanline; you must subtract 1 from the sprite's Y coordinate before writing it here."
@@ -566,7 +562,8 @@ impl Ppu {
             let attributes = self.oam[sprite_idx * 4 + 2];
             let sprite_x = self.oam[sprite_idx * 4 + 3] as u16;
 
-            if dot >= sprite_x
+            if square_sprites
+                && dot >= sprite_x
                 && dot < (sprite_x + 8)
                 && scanline >= sprite_y
                 && scanline < (sprite_y + 8)
@@ -577,17 +574,64 @@ impl Ppu {
                     7 - (scanline - sprite_y)
                 };
 
-                let pattern_0 = self.get_vram_byte_at(
-                    sprite_pattern_table_base
-                        + (u16::from(pattern_idx) * 16)
-                        + sprite_height_offset,
-                );
-                let pattern_1 = self.get_vram_byte_at(
-                    sprite_pattern_table_base
-                        + (u16::from(pattern_idx) * 16)
-                        + sprite_height_offset
-                        + 8,
-                );
+                let sprite_pattern_start =
+                    ((u16::from(self.ppuctrl) << 9) & 0x1000) | (u16::from(pattern_idx) << 4);
+
+                let pattern_0 = self.get_vram_byte_at(sprite_pattern_start + sprite_height_offset);
+                let pattern_1 =
+                    self.get_vram_byte_at(sprite_pattern_start + sprite_height_offset + 8);
+
+                // We use this to calculate the offset into this "strip" of sprite data (the sprite
+                // pos along the x-axis). By default, this is simply actual x - sprite start x.
+                // In the case where the sprite is horizontally flipped (bit 7 of attributes is
+                // active), we need to flip this value.
+                let sprite_strip_offset = if attributes & (1 << 6) == 0 {
+                    7 - (dot - sprite_x)
+                } else {
+                    dot - sprite_x
+                };
+
+                // bit offset into pattern_0 and pattern_1 are overlaid
+                let pattern_low = ((pattern_0 >> sprite_strip_offset) & 0x1)
+                    | (((pattern_1 >> sprite_strip_offset) & 0x1) << 1);
+
+                let pattern_high = attributes & 0b00000011;
+                let pattern_final = pattern_low | (pattern_high << 2);
+
+                // If the low bits 2 bits of the sprite idx (just the bits derived from the
+                // pattern), the sprite at this point is transparent.
+                if pattern_low == 0 {
+                    continue;
+                }
+
+                // If we hit a sprite, set sprite 0 hit
+                if sprite_idx == 0 && pattern_low != 0 && background_pattern_final != 0 {
+                    self.ppustatus |= 1 << 6;
+                }
+
+                let palette_idx = self.get_vram_byte_at(0x3F10 + u16::from(pattern_final));
+
+                return PALETTE[usize::from(palette_idx)];
+            } else if !square_sprites
+                && dot >= sprite_x
+                && dot < (sprite_x + 8)
+                && scanline >= sprite_y
+                && scanline < (sprite_y + 16)
+            {
+                let mut sprite_height_offset = if attributes & (1 << 7) == 0 {
+                    scanline - sprite_y
+                } else {
+                    15 - (scanline - sprite_y)
+                };
+
+                let sprite_pattern_start = ((u16::from(pattern_idx) << 12) & 0x1000)
+                    | ((u16::from(pattern_idx) << 4) & 0x0FE0)
+                    | ((sprite_height_offset << 1) & 0x10);
+
+                let pattern_0 =
+                    self.get_vram_byte_at(sprite_pattern_start + (sprite_height_offset & 0x7));
+                let pattern_1 =
+                    self.get_vram_byte_at(sprite_pattern_start + (sprite_height_offset & 0x7) + 8);
 
                 // We use this to calculate the offset into this "strip" of sprite data (the sprite
                 // pos along the x-axis). By default, this is simply actual x - sprite start x.
