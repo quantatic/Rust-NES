@@ -148,7 +148,7 @@ impl Cpu {
         let _processor_status: u8 = ((self.sign as u8) << 7)
             | ((self.overflow as u8) << 6)
             | ((1 as u8) << 5)
-            | ((0 as u8) << 4)
+            | ((1 as u8) << 4)
             | ((self.decimal as u8) << 3)
             | ((self.interrupt as u8) << 2)
             | ((self.zero as u8) << 1)
@@ -159,14 +159,17 @@ impl Cpu {
         let _sp = self.sp;
         if self.bus.dma_in_progress {
             self.bus.dma_in_progress = false;
-            self.cycles_left = 512;
+            self.cycles_left = 513;
+            if !self.bus.ppu.even_frame {
+                self.cycles_left += 1; // on odd CPU cycles DMA takes 1 extra cycle
+            }
         } else if self.bus.ppu.nmi_waiting {
             self.bus.ppu.nmi_waiting = false;
             self.interrupt(Interrupt::Nmi);
         } else {
             let next_instruction = self.fetch_next_instruction();
-            //println!("{:04X?} -> {:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}", next_instruction, pc, a, x, y, processor_status, sp, self.bus.ppu.dot, self.bus.ppu.scanline, self.cycles_completed);
-            //println!("{:04X} -> {:X?}\tA:{:02X}\tX:{:02X}\tY:{:02X}\tP:{:02X}\tSP:{:02X}\tCYC:{}\tV:0x{:04X}", pc, next_instruction, a, x, y, processor_status, sp, self.cycles_completed, self.bus.ppu.ppuaddr);
+            //println!("{:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{:<3} SL:{:<3} CPU Cycle:{} Status:0b{:08b}", pc, a, x, y, processor_status, sp, self.bus.ppu.cycle, self.bus.ppu.scanline, self.cycles_completed, self.bus.ppu.ppustatus);
+            //println!("{:04x?} -> {:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{:<3} SL:{:<3} CPU Cycle:{}", next_instruction, pc, a, x, y, processor_status, sp, self.bus.ppu.cycle, self.bus.ppu.scanline, self.cycles_completed);
             self.execute_instruction(next_instruction);
 
             self.cycles_left += u16::from(next_instruction.cycles);
@@ -1066,6 +1069,24 @@ impl Cpu {
                 cycles: 2,
                 page_cross_cost: false,
             },
+            0x82 => Instruction {
+                opcode: Opcode::Nop,
+                mode: AddressingMode::Immediate(byte_after_opcode),
+                cycles: 2,
+                page_cross_cost: false,
+            },
+            0x89 => Instruction {
+                opcode: Opcode::Nop,
+                mode: AddressingMode::Immediate(byte_after_opcode),
+                cycles: 2,
+                page_cross_cost: false,
+            },
+            0xC2 => Instruction {
+                opcode: Opcode::Nop,
+                mode: AddressingMode::Immediate(byte_after_opcode),
+                cycles: 2,
+                page_cross_cost: false,
+            },
             0xD4 => Instruction {
                 opcode: Opcode::Nop,
                 mode: AddressingMode::ZeroPageX(byte_after_opcode),
@@ -1079,6 +1100,12 @@ impl Cpu {
                 page_cross_cost: false,
             },
             0xDC => Instruction {
+                opcode: Opcode::Nop,
+                mode: AddressingMode::AbsoluteX(word_after_opcode),
+                cycles: 4,
+                page_cross_cost: true,
+            },
+            0xE2 => Instruction {
                 opcode: Opcode::Nop,
                 mode: AddressingMode::AbsoluteX(word_after_opcode),
                 cycles: 4,
@@ -1780,7 +1807,7 @@ impl Cpu {
             }
             AddressingMode::Immediate(val) => val,
             AddressingMode::Accumulator => self.accumulator,
-            _ => panic!(
+            _ => unreachable!(
                 "Attempted to read from address value of {:?} illegally",
                 mode
             ),

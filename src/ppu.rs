@@ -461,12 +461,17 @@ impl Ppu {
         }
     }
 
-    pub fn get_vram_byte_at(&mut self, addr: u16) -> u8 {
+    pub fn get_vram_byte_at(&self, addr: u16) -> u8 {
         let mut actual_addr = addr % 0x4000;
 
         // palettes are mirrored from 0x3F00 to 0x4000 every 0x20 bytes
         if actual_addr >= 0x3F00 && actual_addr < 0x4000 {
             actual_addr = ((actual_addr - 0x3F00) % 0x20) + 0x3F00;
+        }
+
+        // Data at addresses 0x3000-0x3EFF mirrors 0x2000-0x2EFF
+        if actual_addr >= 0x3000 && actual_addr < 0x3F00 {
+            actual_addr -= 0x1000;
         }
 
         if actual_addr >= 0x2000 && actual_addr < 0x3000 {
@@ -475,11 +480,6 @@ impl Ppu {
                 rom::MirroringType::Horizontal => actual_addr &= !0x0400,
                 rom::MirroringType::Vertical => actual_addr &= !0x0800,
             };
-        }
-
-        // Data at addresses 0x3000-0x3EFF mirrors 0x2000-0x2EFF
-        if actual_addr >= 0x3000 && actual_addr < 0x3F00 {
-            actual_addr -= 0x1000;
         }
 
         // Mirror 0x3F0{0,4,8,C} at 0x3F1{0,4,8,C}
@@ -496,6 +496,11 @@ impl Ppu {
         // palettes are mirrored from 0x3F00 to 0x4000 every 0x20 bytes
         if actual_addr >= 0x3F00 {
             actual_addr = ((actual_addr - 0x3F00) % 0x20) + 0x3F00;
+        }
+
+        // Data at addresses 0x3000-0x3EFF mirrors 0x2000-0x2EFF
+        if actual_addr >= 0x3000 && actual_addr < 0x3F00 {
+            actual_addr -= 0x1000;
         }
 
         if actual_addr >= 0x2000 && actual_addr < 0x3000 {
@@ -523,13 +528,15 @@ impl Ppu {
     }
 
     fn get_current_pixel(&mut self, scanline: u16, dot: u16) -> Color {
-        let x_offset = 15 - self.fine_x; // fine_x of 0 means we actually want the highest bit of pattern_table_shift_{high,low}
+        let palette_x_offset = 7 - self.fine_x; // fine_x of 0 means we want the highest bit of 8-bit attribute_table_palette_shift_{high,low}
+        let pattern_x_offset = 15 - self.fine_x; // fine_x of 0 means we actually want the highest bit of 16-bit pattern_table_shift_{high,low}
 
         // Bits from left->right (bit_1 bit_2 bit_3 bit_4)
-        let bit_1 = (self.attribute_table_palette_shift_high >> self.fine_x) & 0x1;
-        let bit_2 = (self.attribute_table_palette_shift_low >> self.fine_x) & 0x1;
-        let bit_3 = u8::try_from((self.pattern_table_shift_high >> x_offset) & 0x1).unwrap();
-        let bit_4 = u8::try_from((self.pattern_table_shift_low >> x_offset) & 0x1).unwrap();
+        let bit_1 = (self.attribute_table_palette_shift_high >> palette_x_offset) & 0x1;
+        let bit_2 = (self.attribute_table_palette_shift_low >> palette_x_offset) & 0x1;
+        let bit_3 =
+            u8::try_from((self.pattern_table_shift_high >> pattern_x_offset) & 0x1).unwrap();
+        let bit_4 = u8::try_from((self.pattern_table_shift_low >> pattern_x_offset) & 0x1).unwrap();
 
         // If background rendering enabled, get the background pattern offset here. Otherwise,
         // the offset will always be 0 (for the default background).
@@ -539,6 +546,10 @@ impl Ppu {
             } else {
                 0
             };
+
+        if scanline % 8 == 0 || dot % 8 == 0 {
+            //return PALETTE[0];
+        }
 
         let background_palette_idx =
             self.get_vram_byte_at(0x3F00 + u16::from(background_pattern_final));
@@ -587,10 +598,6 @@ impl Ppu {
                 } else {
                     dot - sprite_x
                 };
-
-                /*if sprite_strip_offset == 0 || sprite_strip_offset == 7 || sprite_height_offset == 0 || sprite_height_offset == 7 {
-                    return PALETTE[0x0D];
-                }*/
 
                 // bit offset into pattern_0 and pattern_1 are overlaid
                 let pattern_low = ((pattern_0 >> sprite_strip_offset) & 0x1)
@@ -654,18 +661,20 @@ impl Ppu {
                     self.pattern_table_shift_high <<= 1;
 
                     // If latch is set, make sure we set the bit that would be shifted in
-                    self.attribute_table_palette_shift_low >>= 1;
+                    self.attribute_table_palette_shift_low <<= 1;
                     if self.attribute_table_palette_latch_low {
-                        self.attribute_table_palette_shift_low |= 0x80;
+                        self.attribute_table_palette_shift_low |= 0x01;
                     }
 
-                    self.attribute_table_palette_shift_high >>= 1;
+                    self.attribute_table_palette_shift_high <<= 1;
                     if self.attribute_table_palette_latch_high {
-                        self.attribute_table_palette_shift_high |= 0x80;
+                        self.attribute_table_palette_shift_high |= 0x01;
                     }
-                    //println!("0b{:08b}", self.attribute_table_palette_shift_low);
 
                     if self.cycle % 8 == 0 {
+                        // We don't actually do decoding, we "decode" at reload-time. As a result,
+                        // we need to reload BEFORE incrementing coarse x (contrary to what the
+                        // wiki states).
                         self.reload_shift_registers();
                         self.coarse_x_increment();
                     }
@@ -675,32 +684,40 @@ impl Ppu {
             if self.scanline <= 239 || self.scanline == 261 {
                 if self.cycle == 256 {
                     self.fine_y_increment();
+                } else if self.cycle == 257 {
+                    self.ppuaddr &= !0x041F; // assign all bits related to horizontal position from ppuscroll to ppuaddr
+                    self.ppuaddr |= self.ppuscroll & 0x041F;
+
+                    // Update PPUCTRL nametable select to keep in sync
+                    self.ppuctrl &= !0x1;
+                    self.ppuctrl |= ((self.ppuaddr >> 10) & 0x1) as u8;
                 }
             }
 
-            if self.cycle == 257 {
-                self.ppuaddr &= !0x041F; // assign all bits related to horizontal position from ppuscroll to ppuaddr
-                self.ppuaddr |= self.ppuscroll & 0x041F;
-            }
-
             if self.scanline == 261 {
-                if self.cycle == 1 {
-                    self.ppustatus &= !(1 << 6); // clear sprite 0 hit at cycle 1 of scaline 261 (pre-render line)
-                    self.ppustatus &= !(1 << 7); // clear vblank at cycle 1 of scanline 261 (pre-render line)
-                } else if self.cycle >= 280 && self.cycle <= 304 {
+                if self.cycle >= 280 && self.cycle <= 304 {
                     // Reload vertical scroll bits
                     self.ppuaddr &= !0x7BE0;
                     self.ppuaddr |= self.ppuscroll & 0x7BE0;
+
+                    // Update PPUCTRL nametable select to keep in sync
+                    self.ppuctrl &= !0x2;
+                    self.ppuctrl |= ((self.ppuaddr >> 10) & 0x3) as u8;
                 } else if self.cycle == 339 && !self.even_frame {
-                    // On odd frames, we skip right from (339, 261) to (0, 0)
+                    // On odd frames, we skip right from (339, 261) to (0, 0) -> skip a cycle
                     self.cycle += 1;
                 }
             }
         }
 
-        if self.scanline == 241 && self.cycle == 1 {
-            self.ppustatus |= 1 << 7; // set vblank at cycle 1 of scanline 241
-            self.nmi_waiting = (self.ppuctrl >> 7) & 0x1 != 0; //Nmi only occurs on vblank if ppuctrl bit 7 is set
+        if self.cycle == 1 {
+            if self.scanline == 241 {
+                self.ppustatus |= 1 << 7; // set vblank at cycle 1 of scanline 241
+                self.nmi_waiting = (self.ppuctrl >> 7) & 0x1 != 0; //Nmi only occurs on vblank if ppuctrl bit 7 is set
+            } else if self.scanline == 261 {
+                self.ppustatus &= !(1 << 6); // clear sprite 0 hit at cycle 1 of scaline 261 (pre-render line)
+                self.ppustatus &= !(1 << 7); // clear vblank at cycle 1 of scanline 261 (pre-render line)
+            }
         }
 
         // OAMADDR gets set to 0 during ticks 257-320 of pre-render and visible scanlines
@@ -779,7 +796,7 @@ impl Ppu {
             (1, 0) => (attribute_data >> 2) & 0x3,
             (0, 1) => (attribute_data >> 4) & 0x3,
             (1, 1) => (attribute_data >> 6) & 0x3,
-            _ => panic!(),
+            _ => unreachable!(),
         };
 
         // Set the low and high shift registers from the corresponding data (single bit latch ->

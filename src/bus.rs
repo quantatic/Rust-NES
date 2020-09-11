@@ -58,7 +58,7 @@ impl Bus {
                         // If not reading from palette, the results are buffered (we return the
                         // result of the LAST read). When reading from palette we still update
                         // buffer, but just return the actual value.
-                        let returned_data = if (addr % 0x4000) < 0x3F00 {
+                        let returned_data = if (addr % 0x4000) <= 0x3EFF {
                             let buffered_data = self.ppu.ppudata_buffer;
                             self.ppu.ppudata_buffer = data;
                             buffered_data
@@ -99,15 +99,12 @@ impl Bus {
 
                         returned_data
                     }
-                    _ => panic!(),
+                    _ => unreachable!(),
                 }
             }
             0x4000..=0x4017 => {
                 match addr {
-                    0x4015 => {
-                        //println!("Reading some sound shenanigans from 0x4015");
-                        0
-                    }
+                    0x4015 => 0,
                     0x4016 => self.controller.read() as u8,
                     0x4017 => {
                         //ignore read from controller 2
@@ -159,7 +156,6 @@ impl Bus {
                         self.ppu.oamaddr = self.ppu.oamaddr.wrapping_add(1);
                     }
                     0x2005 => {
-                        //println!("Writing to 0x2005 at ({}, {})", self.ppu.dot, self.ppu.scanline);
                         if !self.ppu.two_write_partial {
                             self.ppu.ppuscroll &= !0x1F; // clear bits 1-5 of ppuscroll
                             self.ppu.ppuscroll |= (val as u16) >> 3; // assign top 5 bits of val to ppuscroll coarse x scroll (1-5)
@@ -172,11 +168,13 @@ impl Bus {
                         self.ppu.two_write_partial = !self.ppu.two_write_partial;
                     }
                     0x2006 => {
-                        //println!("Writing to 0x2006 at ({}, {})", self.ppu.dot, self.ppu.scanline);
                         if !self.ppu.two_write_partial {
                             self.ppu.ppuscroll &= !0x3F00; // clear bits 8-13 of ppuscroll
                             self.ppu.ppuscroll |= ((val as u16) & 0x3F) << 8; //assign bits 1-6 of val to bits 9-14 of ppuscroll
                             self.ppu.ppuscroll &= !0x4000; //clear bit 15 of ppuscroll
+
+                            self.ppu.ppuctrl &= !0x3; // clear bottom 2 bits of ppuctrl
+                            self.ppu.ppuctrl |= (val & 0xC) >> 2; // assign bottom 2 bits of ppuctrl
                         } else {
                             self.ppu.ppuscroll &= !0xFF; // clear bits 1-8 of ppuscroll
                             self.ppu.ppuscroll |= (val as u16) & 0xFF; // assign bits 1-8 of val to bits 1-8 of ppuscroll
@@ -185,10 +183,9 @@ impl Bus {
                         self.ppu.two_write_partial = !self.ppu.two_write_partial;
                     }
                     0x2007 => {
-                        //assert!(!self.ppu.two_write_partial);
+                        assert!(!self.ppu.two_write_partial);
                         self.ppu.set_vram_byte_at(self.ppu.ppuaddr, val);
-                        //println!("Writing {} to 0x{:04X} at ({}, {})", val, self.ppu.ppuaddr, self.ppu.dot, self.ppu.scanline);
-                        // Check bit 2 of ctrl1 to see how much to increment ppuaddr by
+
                         self.ppu.ppuaddr += if (self.ppu.ppuctrl & (1 << 2)) == 0 {
                             0x1
                         } else {
@@ -213,7 +210,7 @@ impl Bus {
                     0x4016 => {
                         self.controller.set_strobe(val & 0x1 != 0);
                     }
-                    _ => {} //println!("Ignoring write to 0x{:05x} for now", addr),
+                    _ => {}
                 }
             }
             0x8000..=0xFFFF => {

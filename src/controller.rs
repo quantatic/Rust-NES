@@ -39,17 +39,25 @@ impl Controller {
             true => self.strobe = true,
             false => {
                 self.strobe = false;
-                self.state =
-					/*        A           B           SELECT            START           UP           DOWN           LEFT           RIGHT    */ 
-					[Keycode::Z, Keycode::X, Keycode::RShift, Keycode::Return, Keycode::Up, Keycode::Down, Keycode::Left, Keycode::Right]
-						.iter()
-						.map(|&keycode| {
-							self.input.borrow()
-								.keyboard_state()
-								.is_scancode_pressed(Scancode::from_keycode(keycode).unwrap())
-						})
-						.rev()
-						.collect::<Vec<_>>();
+                self.state = [
+                    Keycode::Z,      // A
+                    Keycode::X,      // B
+                    Keycode::RShift, // SELECT
+                    Keycode::Return, // START
+                    Keycode::Up,     // UP
+                    Keycode::Down,   // DOWN
+                    Keycode::Left,   // LEFT
+                    Keycode::Right,  // RIGHT
+                ]
+                .iter()
+                .map(|&keycode| {
+                    self.input
+                        .borrow()
+                        .keyboard_state()
+                        .is_scancode_pressed(Scancode::from_keycode(keycode).unwrap())
+                })
+                .rev()
+                .collect::<Vec<_>>();
             }
         }
     }

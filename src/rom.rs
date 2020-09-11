@@ -46,7 +46,10 @@ impl Rom {
         }
 
         if (rom_ctrl_byte_2 & (0b00001111)) != 0 {
-            //return Err(Error::new(ErrorKind::InvalidData, "Bits 0-3 of Rom Control Byte 2 are not all 0"));
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Bits 0-3 of Rom Control Byte 2 are not all 0",
+            ));
         }
 
         let prg_bytes = u32::try_from(prg_rom_banks).unwrap() * 0x4000;
@@ -77,7 +80,8 @@ impl Rom {
             battery_backed_ram: (rom_ctrl_byte_1 & (1 << 1)) != 0,
             trainer: (rom_ctrl_byte_1 & (1 << 2)) != 0,
         };
-        println!("{:?}", res.mirroring);
+        println!("Mirroring: {:?}", res.mirroring);
+        println!("Mapper Number: {}", res.mapper_number);
         Ok(res)
     }
 }
