@@ -572,13 +572,18 @@ impl Ppu {
             let attributes = self.oam[sprite_idx * 4 + 2];
             let sprite_x = self.oam[sprite_idx * 4 + 3] as u16;
 
+            let sprite_flipped_horizontally = attributes & (1 << 6) != 0;
+            let sprite_flipped_vertically = attributes & (1 << 7) != 0;
+            let pattern_high = attributes & 0b00000011;
+            let sprite_has_priority = (attributes & (1 << 5)) == 0;
+
             if square_sprites
                 && dot >= sprite_x
                 && dot < (sprite_x + 8)
                 && scanline >= sprite_y
                 && scanline < (sprite_y + 8)
             {
-                let sprite_height_offset = if attributes & (1 << 7) == 0 {
+                let sprite_height_offset = if !sprite_flipped_vertically {
                     scanline - sprite_y
                 } else {
                     7 - (scanline - sprite_y)
@@ -592,10 +597,10 @@ impl Ppu {
                     self.get_vram_byte_at(sprite_pattern_start + sprite_height_offset + 8);
 
                 // We use this to calculate the offset into this "strip" of sprite data (the sprite
-                // pos along the x-axis). By default, this is simply actual x - sprite start x.
-                // In the case where the sprite is horizontally flipped (bit 7 of attributes is
-                // active), we need to flip this value.
-                let sprite_strip_offset = if attributes & (1 << 6) == 0 {
+                // pos along the x-axis). By default, this is 7 - (actual x - sprite start x).
+                // In the case where the sprite is horizontally flipped (bit 6 of attributes is
+                // active), we can simply use actual x - sprite start x.
+                let sprite_strip_offset = if !sprite_flipped_horizontally {
                     7 - (dot - sprite_x)
                 } else {
                     dot - sprite_x
@@ -605,7 +610,6 @@ impl Ppu {
                 let pattern_low = ((pattern_0 >> sprite_strip_offset) & 0x1)
                     | (((pattern_1 >> sprite_strip_offset) & 0x1) << 1);
 
-                let pattern_high = attributes & 0b00000011;
                 let pattern_final = pattern_low | (pattern_high << 2);
 
                 // If the low bits 2 bits of the sprite idx (just the bits derived from the
@@ -621,6 +625,13 @@ impl Ppu {
 
                 let palette_idx = self.get_vram_byte_at(0x3F10 + u16::from(pattern_final));
 
+                // If we found a sprite, but it doesn't have priority AND we found a
+                // non-transparent background pixel, the background pixel will be rendered instead
+                // of this sprite pixel.
+                if !sprite_has_priority && background_pattern_final != 0 {
+                    break;
+                }
+
                 return PALETTE[usize::from(palette_idx)];
             } else if !square_sprites
                 && dot >= sprite_x
@@ -628,7 +639,7 @@ impl Ppu {
                 && scanline >= sprite_y
                 && scanline < (sprite_y + 16)
             {
-                let sprite_height_offset = if attributes & (1 << 7) == 0 {
+                let sprite_height_offset = if !sprite_flipped_vertically {
                     scanline - sprite_y
                 } else {
                     15 - (scanline - sprite_y)
@@ -644,10 +655,10 @@ impl Ppu {
                     self.get_vram_byte_at(sprite_pattern_start + (sprite_height_offset & 0x7) + 8);
 
                 // We use this to calculate the offset into this "strip" of sprite data (the sprite
-                // pos along the x-axis). By default, this is simply actual x - sprite start x.
-                // In the case where the sprite is horizontally flipped (bit 7 of attributes is
-                // active), we need to flip this value.
-                let sprite_strip_offset = if attributes & (1 << 6) == 0 {
+                // pos along the x-axis). By default, this is 7 - (actual x - sprite start x).
+                // In the case where the sprite is horizontally flipped (bit 6 of attributes is
+                // active), we can simply use actual x - sprite start x.
+                let sprite_strip_offset = if !sprite_flipped_horizontally {
                     7 - (dot - sprite_x)
                 } else {
                     dot - sprite_x
@@ -657,7 +668,6 @@ impl Ppu {
                 let pattern_low = ((pattern_0 >> sprite_strip_offset) & 0x1)
                     | (((pattern_1 >> sprite_strip_offset) & 0x1) << 1);
 
-                let pattern_high = attributes & 0b00000011;
                 let pattern_final = pattern_low | (pattern_high << 2);
 
                 // If the low bits 2 bits of the sprite idx (just the bits derived from the
@@ -672,6 +682,13 @@ impl Ppu {
                 }
 
                 let palette_idx = self.get_vram_byte_at(0x3F10 + u16::from(pattern_final));
+
+                // If we found a sprite, but it doesn't have priority AND we found a
+                // non-transparent background pixel, the background pixel will be rendered instead
+                // of this sprite pixel.
+                if !sprite_has_priority && background_pattern_final != 0 {
+                    break;
+                }
 
                 return PALETTE[usize::from(palette_idx)];
             }

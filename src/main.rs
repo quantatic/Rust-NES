@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let rom = Rom::new("roms/mario.nes")?;
+    let rom = Rom::new("roms/galaga.nes")?;
 
     let sdl_context = sdl2::init()?;
 
@@ -45,6 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // CPU runs every 12 master ticks ;)
         if master_clock_ticks % 12 == 0 {
             cpu.step();
+
             while cpu_cycle_start_time.elapsed() < time_per_cpu_cycle {} // spinlock :/
 
             cpu_cycle_start_time = Instant::now();
