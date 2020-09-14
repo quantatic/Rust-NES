@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let rom = Rom::new("roms/galaga.nes")?;
+    let rom = Rom::new("roms/mario.nes")?;
 
     let sdl_context = sdl2::init()?;
 
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let time_per_cpu_cycle = Duration::new(1, 0) / (236_250_000 / 11 / 12);
     let mut cpu_cycle_start_time = Instant::now();
-    let start_time = Instant::now();
+    let _start_time = Instant::now();
 
     // Master clocks run at 21.477272 MHz
     loop {
@@ -57,12 +57,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let current_steps = master_clock_ticks / 4;
                 let _last_frame_steps = current_steps - last_frame_start;
                 last_frame_start = current_steps;
-            }
-
-            if cpu.bus.ppu.scanline == 0 && cpu.bus.ppu.cycle == 0 {
-                for i in 0x00..=0x0F {
-                    let addr = 0x3F00 + i;
-                }
             }
         }
 

@@ -40,7 +40,8 @@ impl Bus {
                 // 0x2000-0x2007 mirrored in 0x2000-0x4000
                 let actual_addr = ((addr - 0x2000) % 0x8) + 0x2000;
                 match actual_addr {
-                    0x2000 | 0x2001 => panic!("Not allowed to read from 0x{:04x}", addr),
+                    0x2000 => self.ppu.ppuctrl,
+                    0x2001 => self.ppu.ppumask,
                     // Reading from ppustatus register clears bit 7 (v-blank)
                     0x2002 => {
                         let result = self.ppu.ppustatus;
@@ -113,6 +114,7 @@ impl Bus {
                     _ => panic!("Don't know how to read from 0x{:05x}", addr),
                 }
             }
+            0x4020..=0x7999 => 0x00, // emulate open bus behavior
             0x8000..=0xFFFF => {
                 let mut rom_access_addr = addr - 0x8000;
                 if self.rom.prg_rom.len() <= 0x4000 {
